@@ -32,6 +32,11 @@ type VisibleVideoRect = {
   mirrored: boolean;
 };
 
+type ObjectPosition = {
+  x: number;
+  y: number;
+};
+
 type OverlayMapping = {
   normalizedRect: OverlayArea;
   videoRect: PixelRect;
@@ -177,6 +182,48 @@ export default function OcrScanner() {
       img.src = imageSrc;
     });
 
+  const parseObjectPosition = (value: string): ObjectPosition => {
+    const parts = value.trim().split(/\s+/);
+    const [xRaw, yRaw = xRaw] = parts;
+
+    const parsePart = (part: string) => {
+      if (part.endsWith('%')) {
+        return clamp(Number(part.replace('%', '')) / 100, 0, 1);
+      }
+
+      if (part === 'left' || part === 'top') {
+        return 0;
+      }
+
+      if (part === 'right' || part === 'bottom') {
+        return 1;
+      }
+
+      return 0.5;
+    };
+
+    return {
+      x: parsePart(xRaw),
+      y: parsePart(yRaw),
+    };
+  };
+
+  const captureFrameFromVideo = (videoElement: HTMLVideoElement) => {
+    const canvas = document.createElement('canvas');
+    canvas.width = videoElement.videoWidth;
+    canvas.height = videoElement.videoHeight;
+
+    const context = canvas.getContext('2d');
+
+    if (!context) {
+      throw new Error('Failed to get canvas context');
+    }
+
+    context.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
+
+    return canvas.toDataURL('image/jpeg', 0.95);
+  };
+
   const getVisibleVideoRect = (): VisibleVideoRect | null => {
     const container = cameraWrapperRef.current;
 
@@ -200,8 +247,12 @@ export default function OcrScanner() {
     const scale = Math.max(containerWidth / videoWidth, containerHeight / videoHeight);
     const renderedWidth = videoWidth * scale;
     const renderedHeight = videoHeight * scale;
-    const offsetX = (renderedWidth - containerWidth) / 2;
-    const offsetY = (renderedHeight - containerHeight) / 2;
+    const computedStyle = window.getComputedStyle(videoElement);
+    const objectPosition = parseObjectPosition(
+      computedStyle.objectPosition || '50% 50%',
+    );
+    const offsetX = Math.max(0, renderedWidth - containerWidth) * objectPosition.x;
+    const offsetY = Math.max(0, renderedHeight - containerHeight) * objectPosition.y;
 
     return {
       videoWidth,
@@ -520,15 +571,15 @@ export default function OcrScanner() {
     }
 
     const visibleVideoRect = getVisibleVideoRect();
+    const videoElement = getVideoElement();
 
-    if (!visibleVideoRect) {
+    if (!visibleVideoRect || !videoElement) {
       setExtractedText('Error cropping captured image: Video metadata unavailable');
       return;
     }
 
-    const photo = cameraRef.current.takePhoto();
-
     try {
+      const photo = captureFrameFromVideo(videoElement);
       const mapping = getOverlayRectInVideoSpace(visibleVideoRect);
       await runOcrPipeline(photo, mapping);
     } catch (error) {
