@@ -1,204 +1,139 @@
-"use client";
+'use client';
 
-import React, { useState, useRef } from "react";
-import { Camera } from "react-camera-pro";
-import Tesseract from "tesseract.js";
-
-const styles: Record<string, React.CSSProperties> = {
-  container: {
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    gap: 24,
-    padding: 24,
-    maxWidth: 768,
-    margin: "0 auto",
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: "bold",
-  },
-  cameraWrapper: {
-    position: "relative",
-    width: "100%",
-    height: 320,
-    background: "#000",
-    borderRadius: 12,
-    overflow: "hidden",
-  },
-  controls: {
-    display: "flex",
-    gap: 16,
-  },
-  button: {
-    color: "#fff",
-    padding: "12px 20px",
-    border: "none",
-    borderRadius: 8,
-    cursor: "pointer",
-    transition: "background 0.2s ease",
-  },
-  uploadButton: {
-    color: "#fff",
-    padding: "12px 20px",
-    borderRadius: 8,
-    cursor: "pointer",
-    transition: "background 0.2s ease",
-  },
-  hiddenInput: {
-    display: "none",
-  },
-  progressContainer: {
-    width: "100%",
-    height: 18,
-    background: "#e5e7eb",
-    borderRadius: 999,
-    overflow: "hidden",
-  },
-  progressBar: {
-    height: "100%",
-    background: "#2563eb",
-    color: "#fff",
-    fontSize: 12,
-    textAlign: "center",
-    lineHeight: "18px",
-    transition: "width 0.3s ease",
-  },
-  imagePreview: {
-    marginTop: 16,
-    width: "100%",
-  },
-  previewTitle: {
-    fontSize: 14,
-    fontWeight: 600,
-    marginBottom: 8,
-  },
-  previewImage: {
-    maxHeight: 300,
-    maxWidth: "100%",
-    borderRadius: 8,
-    boxShadow: "0 2px 10px rgba(0, 0, 0, 0.15)",
-  },
-  resultContainer: {
-    width: "100%",
-    background: "#f3f4f6",
-    padding: 16,
-    borderRadius: 8,
-    border: "1px solid #d1d5db",
-  },
-  resultTitle: {
-    fontWeight: "bold",
-    color: "#374151",
-    marginBottom: 8,
-  },
-  resultText: {
-    whiteSpace: "pre-wrap",
-    background: "#fff",
-    padding: 12,
-    border: "1px solid #d1d5db",
-    borderRadius: 6,
-    color: "#1f2937",
-  },
-};
-
-/**
- * Crops a full-resolution camera capture down to the exact pixels that are
- * visible inside `viewportEl` when the camera video uses `object-fit: cover`.
- *
- * How the math works
- * ──────────────────
- * Given:
- *   iw, ih  — original image dimensions  (img.naturalWidth / naturalHeight)
- *   vw, vh  — viewport element dimensions (getBoundingClientRect)
- *
- * With object-fit: cover the browser scales the image uniformly so that it
- * fills the viewport completely (no letterboxing), then centres it.
- * The scale factor applied is:
- *
- *   scale = max(vw / iw, vh / ih)
- *
- * After scaling, the rendered image size is (iw·scale) × (ih·scale).
- * The portion that overflows outside the viewport is clipped equally on both
- * sides, so the crop origin in image-space is:
- *
- *   srcX = ((iw·scale − vw) / 2) / scale  =  (iw − vw/scale) / 2
- *   srcY = ((ih·scale − vh) / 2) / scale  =  (ih − vh/scale) / 2
- *
- * The source crop size in image-space is:
- *
- *   srcW = vw / scale
- *   srcH = vh / scale
- *
- * We draw that region onto a canvas sized vw × vh, producing a 1:1 match with
- * exactly what the user sees in the browser.
- */
-async function captureVisibleViewport(
-  fullResBase64: string,
-  viewportEl: HTMLElement
-): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-
-    img.onload = () => {
-      const { width: vw, height: vh } =
-        viewportEl.getBoundingClientRect();
-
-      const iw = img.naturalWidth;
-      const ih = img.naturalHeight;
-
-      // Scale factor used by object-fit: cover
-      const scale = Math.max(vw / iw, vh / ih);
-
-      // Source rectangle in original image coordinates
-      const srcX = (iw - vw / scale) / 2;
-      const srcY = (ih - vh / scale) / 2;
-      const srcW = vw / scale;
-      const srcH = vh / scale;
-
-      // Draw only the visible portion onto a canvas matching the viewport size
-      const canvas = document.createElement("canvas");
-      canvas.width = Math.round(vw);
-      canvas.height = Math.round(vh);
-
-      const ctx = canvas.getContext("2d");
-      if (!ctx) {
-        reject(new Error("Could not get 2D canvas context"));
-        return;
-      }
-
-      ctx.drawImage(
-        img,
-        srcX, srcY, srcW, srcH,   // source: visible region in image-space
-        0, 0, canvas.width, canvas.height  // destination: full canvas
-      );
-
-      resolve(canvas.toDataURL("image/jpeg", 0.92));
-    };
-
-    img.onerror = () => reject(new Error("Failed to load captured image"));
-    img.src = fullResBase64;
-  });
-}
+import React, {useState, useRef} from 'react';
+import {Camera} from 'react-camera-pro';
+import Tesseract from 'tesseract.js';
 
 export default function OcrScanner() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const cameraRef = useRef<any>(null);
-  const cameraWrapperRef = useRef<HTMLDivElement>(null);
 
   const [image, setImage] = useState<string | null>(null);
-  const [extractedText, setExtractedText] = useState("");
+  const [extractedText, setExtractedText] = useState('');
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(0);
-  const [numberOfCameras, setNumberOfCameras] = useState(0);
+
+  const containerStyle: React.CSSProperties = {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: '24px',
+    padding: '24px',
+    maxWidth: '768px',
+    margin: '0 auto',
+  };
+
+  const titleStyle: React.CSSProperties = {
+    fontSize: '28px',
+    fontWeight: 'bold',
+  };
+
+  const cameraWrapperStyle: React.CSSProperties = {
+    position: 'relative',
+    width: '100%',
+    height: '320px',
+    background: '#000',
+    borderRadius: '12px',
+    overflow: 'hidden',
+  };
+
+  const controlsStyle: React.CSSProperties = {
+    display: 'flex',
+    gap: '16px',
+  };
+
+  const buttonStyle: React.CSSProperties = {
+    background: loading ? '#94a3b8' : '#2563eb',
+    color: '#fff',
+    padding: '12px 20px',
+    border: 'none',
+    borderRadius: '8px',
+    cursor: loading ? 'not-allowed' : 'pointer',
+    transition: 'background 0.2s ease',
+  };
+
+  const uploadButtonStyle: React.CSSProperties = {
+    background: '#4b5563',
+    color: '#fff',
+    padding: '12px 20px',
+    borderRadius: '8px',
+    cursor: loading ? 'not-allowed' : 'pointer',
+    transition: 'background 0.2s ease',
+    opacity: loading ? 0.7 : 1,
+  };
+
+  const hiddenInputStyle: React.CSSProperties = {
+    display: 'none',
+  };
+
+  const progressContainerStyle: React.CSSProperties = {
+    width: '100%',
+    height: '18px',
+    background: '#e5e7eb',
+    borderRadius: '999px',
+    overflow: 'hidden',
+  };
+
+  const progressBarStyle: React.CSSProperties = {
+    width: `${progress}%`,
+    height: '100%',
+    background: '#2563eb',
+    color: '#fff',
+    fontSize: '12px',
+    textAlign: 'center',
+    lineHeight: '18px',
+    transition: 'width 0.3s ease',
+  };
+
+  const imagePreviewStyle: React.CSSProperties = {
+    marginTop: '16px',
+    width: '100%',
+  };
+
+  const previewTitleStyle: React.CSSProperties = {
+    fontSize: '14px',
+    fontWeight: 600,
+    marginBottom: '8px',
+  };
+
+  const previewImageStyle: React.CSSProperties = {
+    maxHeight: '300px',
+    maxWidth: '100%',
+    borderRadius: '8px',
+    boxShadow: '0 2px 10px rgba(0, 0, 0, 0.15)',
+  };
+
+  const resultContainerStyle: React.CSSProperties = {
+    width: '100%',
+    background: '#f3f4f6',
+    padding: '16px',
+    borderRadius: '8px',
+    border: '1px solid #d1d5db',
+  };
+
+  const resultTitleStyle: React.CSSProperties = {
+    fontWeight: 'bold',
+    color: '#374151',
+    marginBottom: '8px',
+  };
+
+  const resultTextStyle: React.CSSProperties = {
+    whiteSpace: 'pre-wrap',
+    background: '#fff',
+    padding: '12px',
+    border: '1px solid #d1d5db',
+    borderRadius: '6px',
+    color: '#1f2937',
+  };
 
   const handleOcr = async (imageSrc: string) => {
     setLoading(true);
-    setExtractedText("");
+    setExtractedText('');
 
     try {
-      const result = await Tesseract.recognize(imageSrc, "eng", {
-        logger: (m) => {
-          if (m.status === "recognizing text") {
+      const result = await Tesseract.recognize(imageSrc, 'eng', {
+        logger: m => {
+          if (m.status === 'recognizing text') {
             setProgress(Math.round(m.progress * 100));
           }
         },
@@ -206,28 +141,19 @@ export default function OcrScanner() {
 
       setExtractedText(result.data.text);
     } catch (error) {
-      setExtractedText("Error extracting text.");
+      setExtractedText('Error extracting text.');
     } finally {
       setLoading(false);
       setProgress(0);
     }
   };
 
-  const captureCameraImage = async () => {
-    if (!cameraRef.current || !cameraWrapperRef.current) return;
-
-    // 1. Take full-resolution photo from the camera hardware
-    const fullPhoto: string = cameraRef.current.takePhoto();
-
-    // 2. Crop the capture to match exactly what is visible in the viewport
-    const croppedPhoto = await captureVisibleViewport(
-      fullPhoto,
-      cameraWrapperRef.current
-    );
-
-    // 3. Show the cropped preview and run OCR on it
-    setImage(croppedPhoto);
-    handleOcr(croppedPhoto);
+  const captureCameraImage = () => {
+    if (cameraRef.current) {
+      const photo = cameraRef.current.takePhoto();
+      setImage(photo);
+      handleOcr(photo);
+    }
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -247,104 +173,58 @@ export default function OcrScanner() {
   };
 
   return (
-    <div style={styles.container}>
-      <h1 style={styles.title}>Next.js Camera & Image OCR</h1>
+    <div style={containerStyle}>
+      <h1 style={titleStyle}>Next.js Camera & Image OCR</h1>
 
-      <div style={styles.cameraWrapper} ref={cameraWrapperRef}>
+      <div style={cameraWrapperStyle}>
         <Camera
-          ref={cameraRef}
           facingMode="environment"
+          ref={cameraRef}
           aspectRatio={16 / 9}
-          numberOfCamerasCallback={setNumberOfCameras}
           errorMessages={{
-            noCameraAccessible: "No camera device found",
-            permissionDenied: "Permission denied",
-            switchCamera: "Cannot switch camera",
-            canvas: "Canvas not supported",
+            noCameraAccessible: 'No camera device found',
           }}
         />
-
-        {/* Switch camera overlay — only shown when device has >1 camera */}
-        {numberOfCameras > 1 && (
-          <button
-            onClick={() => cameraRef.current?.switchCamera()}
-            style={{
-              position: "absolute",
-              top: 12,
-              right: 12,
-              zIndex: 10,
-              background: "rgba(0,0,0,0.45)",
-              border: "none",
-              borderRadius: "50%",
-              width: 44,
-              height: 44,
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              color: "#fff",
-              fontSize: 22,
-            }}
-            title="Switch camera"
-            aria-label="Switch camera"
-          >
-            🔄
-          </button>
-        )}
       </div>
 
-      <div style={styles.controls}>
-        <button
-          onClick={captureCameraImage}
-          style={{
-            ...styles.button,
-            background: loading ? "#94a3b8" : "#2563eb",
-            cursor: loading ? "not-allowed" : "pointer",
-          }}
-          disabled={loading}
-        >
+      <div style={controlsStyle}>
+        <button onClick={captureCameraImage} style={buttonStyle} disabled={loading}>
           Capture & Scan
         </button>
 
-        <label
-          style={{
-            ...styles.uploadButton,
-            background: loading ? "#94a3b8" : "#4b5563",
-            cursor: loading ? "not-allowed" : "pointer",
-          }}
-        >
+        <label style={uploadButtonStyle}>
           Upload Image
           <input
             type="file"
             accept="image/*"
             onChange={handleFileUpload}
-            style={styles.hiddenInput}
+            style={hiddenInputStyle}
             disabled={loading}
           />
         </label>
       </div>
 
       {loading && (
-        <div style={styles.progressContainer}>
-          <div style={{ ...styles.progressBar, width: `${progress}%` }}>
+        <div style={progressContainerStyle}>
+          <div style={progressBarStyle}>
             {progress}%
           </div>
         </div>
       )}
 
       {image && (
-        <div style={styles.imagePreview}>
-          <p style={styles.previewTitle}>Scanned Image:</p>
+        <div style={imagePreviewStyle}>
+          <p style={previewTitleStyle}>Scanned Image:</p>
 
-          <img src={image} alt="Preview" style={styles.previewImage} />
+          <img src={image} alt="Preview" style={previewImageStyle} />
         </div>
       )}
 
       {extractedText && (
-        <div style={styles.resultContainer}>
-          <p style={styles.resultTitle}>Extracted Text:</p>
+        <div style={resultContainerStyle}>
+          <p style={resultTitleStyle}>Extracted Text:</p>
 
-          <div style={styles.resultText}>{extractedText}</div>
+          <div style={resultTextStyle}>{extractedText}</div>
         </div>
       )}
     </div>
