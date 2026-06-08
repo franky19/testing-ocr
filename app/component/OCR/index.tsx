@@ -37,6 +37,7 @@ export default function OcrScanner() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const cameraRef = useRef<any>(null);
   const cameraWrapperRef = useRef<HTMLDivElement | null>(null);
+  const scanAreaRef = useRef<HTMLDivElement | null>(null);
 
   const [image, setImage] = useState<string | null>(null);
   const [extractedText, setExtractedText] = useState('');
@@ -107,65 +108,75 @@ export default function OcrScanner() {
     return () => window.removeEventListener('resize', updateOverlayArea);
   }, [hasCustomOverlay]);
 
-  const getOverlayCropInVideoSpace = (): OverlayArea | null => {
-    const container = cameraWrapperRef.current;
-
-    if (!container) return null;
-
-    const videoElement = container.querySelector('video') as HTMLVideoElement | null;
-
-    if (!videoElement) return null;
-
-    const videoWidth = videoElement.videoWidth;
-    const videoHeight = videoElement.videoHeight;
-
-    if (!videoWidth || !videoHeight) return null;
-
-    const containerRect = container.getBoundingClientRect();
-    const containerWidth = containerRect.width;
-    const containerHeight = containerRect.height;
-
-    if (!containerWidth || !containerHeight) return null;
-
-    // react-camera-pro preview uses object-fit: cover, so map overlay box to visible video region first.
-    const scale = Math.max(containerWidth / videoWidth, containerHeight / videoHeight);
-    const renderedWidth = videoWidth * scale;
-    const renderedHeight = videoHeight * scale;
-    const offsetX = (renderedWidth - containerWidth) / 2;
-    const offsetY = (renderedHeight - containerHeight) / 2;
-
-    const overlayContainerX = overlayArea.x * containerWidth;
-    const overlayContainerY = overlayArea.y * containerHeight;
-    const overlayContainerWidth = overlayArea.width * containerWidth;
-    const overlayContainerHeight = overlayArea.height * containerHeight;
-
-    const normalizedX = (overlayContainerX + offsetX) / renderedWidth;
-    const normalizedY = (overlayContainerY + offsetY) / renderedHeight;
-    const normalizedWidth = overlayContainerWidth / renderedWidth;
-    const normalizedHeight = overlayContainerHeight / renderedHeight;
-
-    const x = clamp(normalizedX, 0, 1);
-    const y = clamp(normalizedY, 0, 1);
-    const width = clamp(normalizedWidth, 0, 1 - x);
-    const height = clamp(normalizedHeight, 0, 1 - y);
-
-    return {x, y, width, height};
-  };
-
-  const cropImageToNikArea = (
+  const cropImageToViewportArea = (
     imageSrc: string,
-    cropAreaOverride?: OverlayArea | null,
+    cameraRect: DOMRect,
+    overlayRect: DOMRect,
   ) =>
     new Promise<string>((resolve, reject) => {
       const img = document.createElement('img');
 
       img.onload = () => {
-        const cropArea = cropAreaOverride ?? overlayArea;
+        const imageWidth = img.naturalWidth || img.width;
+        const imageHeight = img.naturalHeight || img.height;
 
-        const cropX = Math.floor(img.width * cropArea.x);
-        const cropY = Math.floor(img.height * cropArea.y);
-        const cropWidth = Math.floor(img.width * cropArea.width);
-        const cropHeight = Math.floor(img.height * cropArea.height);
+        if (!imageWidth || !imageHeight || !cameraRect.width || !cameraRect.height) {
+          reject(new Error('Invalid camera or image dimensions'));
+          return;
+        }
+
+        const overlayX = overlayRect.left - cameraRect.left;
+        const overlayY = overlayRect.top - cameraRect.top;
+        const overlayWidth = overlayRect.width;
+        const overlayHeight = overlayRect.height;
+
+        const relativeX = overlayX / cameraRect.width;
+        const relativeY = overlayY / cameraRect.height;
+        const relativeWidth = overlayWidth / cameraRect.width;
+        const relativeHeight = overlayHeight / cameraRect.height;
+
+        const scale = Math.max(
+          cameraRect.width / imageWidth,
+          cameraRect.height / imageHeight,
+        );
+
+        const displayedWidth = imageWidth * scale;
+        const displayedHeight = imageHeight * scale;
+        const offsetX = (displayedWidth - cameraRect.width) / 2;
+        const offsetY = (displayedHeight - cameraRect.height) / 2;
+
+        const cropXFromRect = (overlayX + offsetX) / scale;
+        const cropYFromRect = (overlayY + offsetY) / scale;
+        const cropWidthFromRect = overlayWidth / scale;
+        const cropHeightFromRect = overlayHeight / scale;
+
+        const cropXFromRelative = relativeX * imageWidth;
+        const cropYFromRelative = relativeY * imageHeight;
+        const cropWidthFromRelative = relativeWidth * imageWidth;
+        const cropHeightFromRelative = relativeHeight * imageHeight;
+
+        const useCoverTransform =
+          displayedWidth > cameraRect.width || displayedHeight > cameraRect.height;
+
+        const rawCropX = useCoverTransform ? cropXFromRect : cropXFromRelative;
+        const rawCropY = useCoverTransform ? cropYFromRect : cropYFromRelative;
+        const rawCropWidth = useCoverTransform
+          ? cropWidthFromRect
+          : cropWidthFromRelative;
+        const rawCropHeight = useCoverTransform
+          ? cropHeightFromRect
+          : cropHeightFromRelative;
+
+        const cropX = Math.max(0, Math.min(Math.floor(rawCropX), imageWidth - 1));
+        const cropY = Math.max(0, Math.min(Math.floor(rawCropY), imageHeight - 1));
+        const cropWidth = Math.max(
+          1,
+          Math.min(Math.floor(rawCropWidth), imageWidth - cropX),
+        );
+        const cropHeight = Math.max(
+          1,
+          Math.min(Math.floor(rawCropHeight), imageHeight - cropY),
+        );
 
         const canvas = document.createElement('canvas');
         canvas.width = cropWidth;
@@ -223,11 +234,22 @@ export default function OcrScanner() {
 
   const captureCameraImage = async () => {
     if (cameraRef.current) {
-      const normalizedCropArea = getOverlayCropInVideoSpace();
+      const cameraRect = cameraWrapperRef.current?.getBoundingClientRect();
+      const overlayRect = scanAreaRef.current?.getBoundingClientRect();
+
+      if (!cameraRect || !overlayRect) {
+        setExtractedText('Error cropping captured image: Unable to resolve overlay position');
+        return;
+      }
+
       const photo = cameraRef.current.takePhoto();
 
       try {
-        const croppedPhoto = await cropImageToNikArea(photo, normalizedCropArea);
+        const croppedPhoto = await cropImageToViewportArea(
+          photo,
+          cameraRect,
+          overlayRect,
+        );
         setImage(croppedPhoto);
         handleOcr(croppedPhoto);
       } catch (error) {
@@ -270,6 +292,7 @@ export default function OcrScanner() {
 
         <div className={styles.overlayMask}>
           <div
+            ref={scanAreaRef}
             className={styles.scanArea}
             style={{
               left: `${overlayArea.x * 100}%`,
