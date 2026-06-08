@@ -1,7 +1,6 @@
 'use client';
 
 import React, {useState, useRef, useEffect} from 'react';
-import Image from 'next/image';
 import {Camera} from 'react-camera-pro';
 import Tesseract from 'tesseract.js';
 import styles from './OcrScanner.module.css';
@@ -37,6 +36,7 @@ const NIK_OVERLAY_PRESETS = {
 export default function OcrScanner() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const cameraRef = useRef<any>(null);
+  const cameraWrapperRef = useRef<HTMLDivElement | null>(null);
 
   const [image, setImage] = useState<string | null>(null);
   const [extractedText, setExtractedText] = useState('');
@@ -107,15 +107,65 @@ export default function OcrScanner() {
     return () => window.removeEventListener('resize', updateOverlayArea);
   }, [hasCustomOverlay]);
 
-  const cropImageToNikArea = (imageSrc: string) =>
+  const getOverlayCropInVideoSpace = (): OverlayArea | null => {
+    const container = cameraWrapperRef.current;
+
+    if (!container) return null;
+
+    const videoElement = container.querySelector('video') as HTMLVideoElement | null;
+
+    if (!videoElement) return null;
+
+    const videoWidth = videoElement.videoWidth;
+    const videoHeight = videoElement.videoHeight;
+
+    if (!videoWidth || !videoHeight) return null;
+
+    const containerRect = container.getBoundingClientRect();
+    const containerWidth = containerRect.width;
+    const containerHeight = containerRect.height;
+
+    if (!containerWidth || !containerHeight) return null;
+
+    // react-camera-pro preview uses object-fit: cover, so map overlay box to visible video region first.
+    const scale = Math.max(containerWidth / videoWidth, containerHeight / videoHeight);
+    const renderedWidth = videoWidth * scale;
+    const renderedHeight = videoHeight * scale;
+    const offsetX = (renderedWidth - containerWidth) / 2;
+    const offsetY = (renderedHeight - containerHeight) / 2;
+
+    const overlayContainerX = overlayArea.x * containerWidth;
+    const overlayContainerY = overlayArea.y * containerHeight;
+    const overlayContainerWidth = overlayArea.width * containerWidth;
+    const overlayContainerHeight = overlayArea.height * containerHeight;
+
+    const normalizedX = (overlayContainerX + offsetX) / renderedWidth;
+    const normalizedY = (overlayContainerY + offsetY) / renderedHeight;
+    const normalizedWidth = overlayContainerWidth / renderedWidth;
+    const normalizedHeight = overlayContainerHeight / renderedHeight;
+
+    const x = clamp(normalizedX, 0, 1);
+    const y = clamp(normalizedY, 0, 1);
+    const width = clamp(normalizedWidth, 0, 1 - x);
+    const height = clamp(normalizedHeight, 0, 1 - y);
+
+    return {x, y, width, height};
+  };
+
+  const cropImageToNikArea = (
+    imageSrc: string,
+    cropAreaOverride?: OverlayArea | null,
+  ) =>
     new Promise<string>((resolve, reject) => {
       const img = document.createElement('img');
 
       img.onload = () => {
-        const cropX = Math.floor(img.width * overlayArea.x);
-        const cropY = Math.floor(img.height * overlayArea.y);
-        const cropWidth = Math.floor(img.width * overlayArea.width);
-        const cropHeight = Math.floor(img.height * overlayArea.height);
+        const cropArea = cropAreaOverride ?? overlayArea;
+
+        const cropX = Math.floor(img.width * cropArea.x);
+        const cropY = Math.floor(img.height * cropArea.y);
+        const cropWidth = Math.floor(img.width * cropArea.width);
+        const cropHeight = Math.floor(img.height * cropArea.height);
 
         const canvas = document.createElement('canvas');
         canvas.width = cropWidth;
@@ -173,10 +223,11 @@ export default function OcrScanner() {
 
   const captureCameraImage = async () => {
     if (cameraRef.current) {
+      const normalizedCropArea = getOverlayCropInVideoSpace();
       const photo = cameraRef.current.takePhoto();
 
       try {
-        const croppedPhoto = await cropImageToNikArea(photo);
+        const croppedPhoto = await cropImageToNikArea(photo, normalizedCropArea);
         setImage(croppedPhoto);
         handleOcr(croppedPhoto);
       } catch (error) {
@@ -207,7 +258,7 @@ export default function OcrScanner() {
     <div className={styles.container}>
       <h1 className={styles.title}>Next.js Camera & Image OCR</h1>
 
-      <div className={styles.cameraWrapper}>
+      <div className={styles.cameraWrapper} ref={cameraWrapperRef}>
         <Camera
           facingMode="environment"
           ref={cameraRef}
@@ -341,14 +392,7 @@ export default function OcrScanner() {
         <div className={styles.imagePreview}>
           <p className={styles.previewTitle}>Scanned Image:</p>
 
-          <Image
-            src={image}
-            alt="Preview"
-            className={styles.previewImage}
-            width={1024}
-            height={320}
-            unoptimized
-          />
+          <img src={image} alt="Preview" className={styles.previewImage} />
         </div>
       )}
 
