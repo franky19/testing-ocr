@@ -7,6 +7,8 @@ import Tesseract from 'tesseract.js';
 const DEBUG_OVERLAY = true;
 
 type ViewportMapping = {
+  videoWidth: number;
+  videoHeight: number;
   imageWidth: number;
   imageHeight: number;
   viewportWidth: number;
@@ -20,6 +22,17 @@ type ViewportMapping = {
   scale: number;
   offsetX: number;
   offsetY: number;
+  normalizedX: number;
+  normalizedY: number;
+  normalizedWidth: number;
+  normalizedHeight: number;
+  sourceX: number;
+  sourceY: number;
+  sourceWidth: number;
+  sourceHeight: number;
+};
+
+type CropRect = {
   sourceX: number;
   sourceY: number;
   sourceWidth: number;
@@ -41,54 +54,107 @@ const loadImageFromSource = (imageSrc: string): Promise<HTMLImageElement> => {
   });
 };
 
+function calculateCropFromViewport(
+  videoWidth: number,
+  videoHeight: number,
+  viewportWidth: number,
+  viewportHeight: number,
+  overlayRect: {
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  },
+): CropRect {
+  const scale = Math.max(viewportWidth / videoWidth, viewportHeight / videoHeight);
+  const renderedWidth = videoWidth * scale;
+  const renderedHeight = videoHeight * scale;
+  const offsetX = (viewportWidth - renderedWidth) / 2;
+  const offsetY = (viewportHeight - renderedHeight) / 2;
+
+  const sourceX1 = (overlayRect.left - offsetX) / scale;
+  const sourceY1 = (overlayRect.top - offsetY) / scale;
+  const sourceX2 = (overlayRect.left + overlayRect.width - offsetX) / scale;
+  const sourceY2 = (overlayRect.top + overlayRect.height - offsetY) / scale;
+
+  const clampedX1 = clamp(sourceX1, 0, videoWidth);
+  const clampedY1 = clamp(sourceY1, 0, videoHeight);
+  const clampedX2 = clamp(sourceX2, 0, videoWidth);
+  const clampedY2 = clamp(sourceY2, 0, videoHeight);
+
+  return {
+    sourceX: clampedX1,
+    sourceY: clampedY1,
+    sourceWidth: Math.max(1, clampedX2 - clampedX1),
+    sourceHeight: Math.max(1, clampedY2 - clampedY1),
+  };
+}
+
 const calculateViewportMapping = ({
+  videoWidth,
+  videoHeight,
   imageWidth,
   imageHeight,
   viewportWidth,
   viewportHeight,
-  overlayWidth,
-  overlayHeight,
+  overlayRect,
 }: {
+  videoWidth: number;
+  videoHeight: number;
   imageWidth: number;
   imageHeight: number;
   viewportWidth: number;
   viewportHeight: number;
-  overlayWidth: number;
-  overlayHeight: number;
+  overlayRect: {
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  };
 }): ViewportMapping => {
-  const scale = Math.max(viewportWidth / imageWidth, viewportHeight / imageHeight);
-  const renderedWidth = imageWidth * scale;
-  const renderedHeight = imageHeight * scale;
+  const scale = Math.max(viewportWidth / videoWidth, viewportHeight / videoHeight);
+  const renderedWidth = videoWidth * scale;
+  const renderedHeight = videoHeight * scale;
   const offsetX = (viewportWidth - renderedWidth) / 2;
   const offsetY = (viewportHeight - renderedHeight) / 2;
 
-  const overlayLeft = (viewportWidth - overlayWidth) / 2;
-  const overlayTop = (viewportHeight - overlayHeight) / 2;
+  const videoCrop = calculateCropFromViewport(videoWidth, videoHeight, viewportWidth, viewportHeight, overlayRect);
 
-  const sourceX1 = (overlayLeft - offsetX) / scale;
-  const sourceY1 = (overlayTop - offsetY) / scale;
-  const sourceX2 = (overlayLeft + overlayWidth - offsetX) / scale;
-  const sourceY2 = (overlayTop + overlayHeight - offsetY) / scale;
+  const normalizedX = videoCrop.sourceX / videoWidth;
+  const normalizedY = videoCrop.sourceY / videoHeight;
+  const normalizedX2 = (videoCrop.sourceX + videoCrop.sourceWidth) / videoWidth;
+  const normalizedY2 = (videoCrop.sourceY + videoCrop.sourceHeight) / videoHeight;
 
-  const clampedX1 = clamp(sourceX1, 0, imageWidth);
-  const clampedY1 = clamp(sourceY1, 0, imageHeight);
-  const clampedX2 = clamp(sourceX2, 0, imageWidth);
-  const clampedY2 = clamp(sourceY2, 0, imageHeight);
+  const sourceX1 = clamp(normalizedX * imageWidth, 0, imageWidth);
+  const sourceY1 = clamp(normalizedY * imageHeight, 0, imageHeight);
+  const sourceX2 = clamp(normalizedX2 * imageWidth, 0, imageWidth);
+  const sourceY2 = clamp(normalizedY2 * imageHeight, 0, imageHeight);
+
+  const clampedX1 = sourceX1;
+  const clampedY1 = sourceY1;
+  const clampedX2 = sourceX2;
+  const clampedY2 = sourceY2;
 
   return {
+    videoWidth,
+    videoHeight,
     imageWidth,
     imageHeight,
     viewportWidth,
     viewportHeight,
-    overlayLeft,
-    overlayTop,
-    overlayWidth,
-    overlayHeight,
+    overlayLeft: overlayRect.left,
+    overlayTop: overlayRect.top,
+    overlayWidth: overlayRect.width,
+    overlayHeight: overlayRect.height,
     renderedWidth,
     renderedHeight,
     scale,
     offsetX,
     offsetY,
+    normalizedX,
+    normalizedY,
+    normalizedWidth: Math.max(0, normalizedX2 - normalizedX),
+    normalizedHeight: Math.max(0, normalizedY2 - normalizedY),
     sourceX: clampedX1,
     sourceY: clampedY1,
     sourceWidth: Math.max(1, clampedX2 - clampedX1),
@@ -96,12 +162,12 @@ const calculateViewportMapping = ({
   };
 };
 
-const cropImageToOverlay = async (imageSrc: string, mapping: ViewportMapping): Promise<string> => {
+const cropImageToOverlay = async (imageSrc: string, cropRect: CropRect): Promise<string> => {
   const image = await loadImageFromSource(imageSrc);
   const canvas = document.createElement('canvas');
 
-  canvas.width = Math.round(mapping.sourceWidth);
-  canvas.height = Math.round(mapping.sourceHeight);
+  canvas.width = Math.round(cropRect.sourceWidth);
+  canvas.height = Math.round(cropRect.sourceHeight);
 
   const context = canvas.getContext('2d');
   if (!context) {
@@ -110,10 +176,10 @@ const cropImageToOverlay = async (imageSrc: string, mapping: ViewportMapping): P
 
   context.drawImage(
     image,
-    mapping.sourceX,
-    mapping.sourceY,
-    mapping.sourceWidth,
-    mapping.sourceHeight,
+    cropRect.sourceX,
+    cropRect.sourceY,
+    cropRect.sourceWidth,
+    cropRect.sourceHeight,
     0,
     0,
     canvas.width,
@@ -397,6 +463,21 @@ export default function OcrScanner() {
   const captureCameraImage = async () => {
     if (!cameraRef.current || !cameraWrapperRef.current) return;
 
+    const videoElement = cameraWrapperRef.current.querySelector('video');
+    if (!videoElement || !videoElement.videoWidth || !videoElement.videoHeight) {
+      setExtractedText('Camera stream belum siap. Coba lagi beberapa saat.');
+      return;
+    }
+
+    const viewportWidth = cameraWrapperRef.current.clientWidth;
+    const viewportHeight = cameraWrapperRef.current.clientHeight;
+    const overlayRect = {
+      left: (viewportWidth - effectiveOverlaySize.width) / 2,
+      top: (viewportHeight - effectiveOverlaySize.height) / 2,
+      width: effectiveOverlaySize.width,
+      height: effectiveOverlaySize.height,
+    };
+
     const photo = cameraRef.current.takePhoto();
     if (!photo) return;
 
@@ -404,12 +485,13 @@ export default function OcrScanner() {
       const capturedImage = await loadImageFromSource(photo);
 
       const mapping = calculateViewportMapping({
+        videoWidth: videoElement.videoWidth,
+        videoHeight: videoElement.videoHeight,
         imageWidth: capturedImage.naturalWidth,
         imageHeight: capturedImage.naturalHeight,
-        viewportWidth: cameraWrapperRef.current.clientWidth,
-        viewportHeight: cameraWrapperRef.current.clientHeight,
-        overlayWidth: effectiveOverlaySize.width,
-        overlayHeight: effectiveOverlaySize.height,
+        viewportWidth,
+        viewportHeight,
+        overlayRect,
       });
 
       const croppedImage = await cropImageToOverlay(photo, mapping);
@@ -449,7 +531,6 @@ export default function OcrScanner() {
         <Camera
           facingMode="environment"
           ref={cameraRef}
-          aspectRatio={16 / 9}
           errorMessages={{
             noCameraAccessible: 'No camera device found',
           }}
@@ -540,6 +621,9 @@ export default function OcrScanner() {
           {debugOverlayData && (
             <>
               <div>
+                Video asli: {Math.round(debugOverlayData.mapping.videoWidth)} x {Math.round(debugOverlayData.mapping.videoHeight)} px
+              </div>
+              <div>
                 Image asli: {Math.round(debugOverlayData.mapping.imageWidth)} x {Math.round(debugOverlayData.mapping.imageHeight)} px
               </div>
               <div>Scaling ratio: {debugOverlayData.mapping.scale.toFixed(4)}</div>
@@ -548,6 +632,9 @@ export default function OcrScanner() {
               </div>
               <div>
                 Crop source: X={debugOverlayData.mapping.sourceX.toFixed(2)}, Y={debugOverlayData.mapping.sourceY.toFixed(2)}, W={debugOverlayData.mapping.sourceWidth.toFixed(2)}, H={debugOverlayData.mapping.sourceHeight.toFixed(2)}
+              </div>
+              <div>
+                Normalized: X={debugOverlayData.mapping.normalizedX.toFixed(4)}, Y={debugOverlayData.mapping.normalizedY.toFixed(4)}, W={debugOverlayData.mapping.normalizedWidth.toFixed(4)}, H={debugOverlayData.mapping.normalizedHeight.toFixed(4)}
               </div>
             </>
           )}
