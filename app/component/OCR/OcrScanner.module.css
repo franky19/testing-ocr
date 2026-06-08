@@ -22,32 +22,67 @@
   overflow: hidden;
 }
 
-.overlayMask {
+.viewportLayer {
   position: absolute;
   inset: 0;
-  pointer-events: none;
+  z-index: 3;
+}
+
+.viewportRnd {
+  border: 2px solid #f59e0b;
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.35);
+}
+
+.viewportContent {
+  width: 100%;
+  height: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
+  border: 1px dashed rgba(255, 255, 255, 0.8);
+  background: rgba(245, 158, 11, 0.12);
+  cursor: move;
 }
 
-.scanArea {
-  position: absolute;
-  border: 2px solid #22d3ee;
-  border-radius: 10px;
-  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.45);
-}
-
-.scanLabel {
-  position: absolute;
-  top: -28px;
-  left: 0;
-  background: rgba(15, 23, 42, 0.8);
-  color: #fff;
+.viewportLabel {
   font-size: 12px;
-  line-height: 1;
-  padding: 6px 10px;
+  letter-spacing: 1.6px;
+  font-weight: 700;
+  color: #fff;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.topLeftHandle,
+.topRightHandle,
+.bottomLeftHandle,
+.bottomRightHandle {
+  width: 12px !important;
+  height: 12px !important;
+  border: 2px solid #fff;
   border-radius: 999px;
+  background: #f59e0b;
+}
+
+.topLeftHandle {
+  top: -7px !important;
+  left: -7px !important;
+}
+
+.topRightHandle {
+  top: -7px !important;
+  right: -7px !important;
+}
+
+.bottomLeftHandle {
+  bottom: -7px !important;
+  left: -7px !important;
+}
+
+.bottomRightHandle {
+  bottom: -7px !important;
+  right: -7px !important;
 }
 
 .controls {
@@ -87,62 +122,6 @@
   background: #374151;
 }
 
-.calibrationButton {
-  background: #0f766e;
-  color: #fff;
-  padding: 12px 20px;
-  border: none;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: background 0.2s ease;
-}
-
-.calibrationButton:hover {
-  background: #0d5f59;
-}
-
-.calibrationPanel {
-  width: 100%;
-  padding: 16px;
-  border: 1px solid #cbd5e1;
-  border-radius: 10px;
-  background: #f8fafc;
-  display: grid;
-  gap: 12px;
-}
-
-.calibrationTitle {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 700;
-  color: #0f172a;
-}
-
-.sliderField {
-  display: grid;
-  gap: 6px;
-  font-size: 13px;
-  color: #334155;
-}
-
-.sliderField input {
-  width: 100%;
-}
-
-.resetPresetButton {
-  justify-self: start;
-  background: #1e293b;
-  color: #fff;
-  border: none;
-  border-radius: 8px;
-  padding: 10px 14px;
-  cursor: pointer;
-}
-
-.resetPresetButton:hover {
-  background: #0f172a;
-}
-
 .hiddenInput {
   display: none;
 }
@@ -177,10 +156,8 @@
 }
 
 .previewImage {
-  display: block;
-  width: 100%;
-  height: auto;
   max-height: 300px;
+  width: 100%;
   object-fit: contain;
   border-radius: 8px;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
@@ -207,4 +184,31 @@
   border: 1px solid #d1d5db;
   border-radius: 6px;
   color: #1f2937;
+}
+
+@media (max-width: 767px) {
+  .container {
+    padding: 16px;
+    gap: 16px;
+  }
+
+  .title {
+    font-size: 22px;
+    text-align: center;
+  }
+
+  .cameraWrapper {
+    height: 260px;
+  }
+
+  .controls {
+    width: 100%;
+    flex-direction: column;
+  }
+
+  .button,
+  .uploadButton {
+    width: 100%;
+    text-align: center;
+  }
 }

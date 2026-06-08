@@ -1,212 +1,126 @@
 'use client';
 
-import React, {useState, useRef, useEffect} from 'react';
+import React, {useEffect, useRef, useState} from 'react';
 import {Camera} from 'react-camera-pro';
+import {Rnd, RndDragCallback, RndResizeCallback} from 'react-rnd';
 import Tesseract from 'tesseract.js';
 import styles from './OcrScanner.module.css';
+import {cropImageFromBase64} from './utils/cropImage';
+import {Rect, getImageDimensions} from './utils/imageDimensions';
+import {calculateViewportToImageCoordinates} from './utils/viewportMapper';
 
-type OverlayArea = {
-  x: number;
-  y: number;
+interface CameraHandle {
+  takePhoto: (type?: 'base64url' | 'imgData') => string | ImageData;
+}
+
+interface Size {
   width: number;
   height: number;
+}
+
+const MIN_VIEWPORT_WIDTH = 120;
+const MIN_VIEWPORT_HEIGHT = 90;
+
+const clamp = (value: number, min: number, max: number): number => {
+  if (value < min) {
+    return min;
+  }
+
+  if (value > max) {
+    return max;
+  }
+
+  return value;
 };
 
-const NIK_OVERLAY_PRESETS = {
-  mobile: {
-    x: 0.08,
-    y: 0.26,
-    width: 0.84,
-    height: 0.16,
-  },
-  tablet: {
-    x: 0.1,
-    y: 0.28,
-    width: 0.8,
-    height: 0.16,
-  },
-  desktop: {
-    x: 0.11,
-    y: 0.3,
-    width: 0.78,
-    height: 0.15,
-  },
+const createDefaultViewport = (cameraSize: Size): Rect => {
+  const defaultWidth = clamp(cameraSize.width * 0.72, 180, cameraSize.width);
+  const defaultHeight = clamp(cameraSize.height * 0.36, 110, cameraSize.height);
+
+  return {
+    x: Math.max(0, (cameraSize.width - defaultWidth) / 2),
+    y: Math.max(0, (cameraSize.height - defaultHeight) / 2),
+    width: defaultWidth,
+    height: defaultHeight,
+  };
+};
+
+const clampViewportToContainer = (viewport: Rect, cameraSize: Size): Rect => {
+  const maxWidth = Math.max(MIN_VIEWPORT_WIDTH, cameraSize.width);
+  const maxHeight = Math.max(MIN_VIEWPORT_HEIGHT, cameraSize.height);
+  const width = clamp(viewport.width, MIN_VIEWPORT_WIDTH, maxWidth);
+  const height = clamp(viewport.height, MIN_VIEWPORT_HEIGHT, maxHeight);
+  const x = clamp(viewport.x, 0, Math.max(0, cameraSize.width - width));
+  const y = clamp(viewport.y, 0, Math.max(0, cameraSize.height - height));
+
+  return {
+    x,
+    y,
+    width,
+    height,
+  };
 };
 
 export default function OcrScanner() {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const cameraRef = useRef<any>(null);
+  const cameraRef = useRef<CameraHandle | null>(null);
   const cameraWrapperRef = useRef<HTMLDivElement | null>(null);
-  const scanAreaRef = useRef<HTMLDivElement | null>(null);
 
-  const [image, setImage] = useState<string | null>(null);
+  const [originalImage, setOriginalImage] = useState<string | null>(null);
+  const [croppedImage, setCroppedImage] = useState<string | null>(null);
   const [extractedText, setExtractedText] = useState('');
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(0);
-  const [overlayArea, setOverlayArea] = useState<OverlayArea>(
-    NIK_OVERLAY_PRESETS.mobile,
-  );
-  const [isCalibrationOpen, setIsCalibrationOpen] = useState(false);
-  const [hasCustomOverlay, setHasCustomOverlay] = useState(false);
-
-  const getPresetByScreenWidth = (screenWidth: number): OverlayArea => {
-    if (screenWidth >= 1024) {
-      return NIK_OVERLAY_PRESETS.desktop;
-    }
-
-    if (screenWidth >= 768) {
-      return NIK_OVERLAY_PRESETS.tablet;
-    }
-
-    return NIK_OVERLAY_PRESETS.mobile;
-  };
-
-  const clamp = (value: number, min: number, max: number) =>
-    Math.min(Math.max(value, min), max);
-
-  const updateOverlayAreaValue = (key: keyof OverlayArea, value: number) => {
-    setHasCustomOverlay(true);
-
-    setOverlayArea(previous => {
-      const next = {
-        ...previous,
-        [key]: value,
-      };
-
-      if (key === 'width') {
-        next.width = clamp(value, 0.4, 0.95);
-      }
-
-      if (key === 'height') {
-        next.height = clamp(value, 0.08, 0.35);
-      }
-
-      next.x = clamp(next.x, 0, 1 - next.width);
-      next.y = clamp(next.y, 0, 1 - next.height);
-
-      return next;
-    });
-  };
-
-  const resetOverlayToDevicePreset = () => {
-    setHasCustomOverlay(false);
-    setOverlayArea(getPresetByScreenWidth(window.innerWidth));
-  };
+  const [cameraSize, setCameraSize] = useState<Size>({width: 0, height: 0});
+  const [viewport, setViewport] = useState<Rect>({
+    x: 100,
+    y: 80,
+    width: 300,
+    height: 150,
+  });
 
   useEffect(() => {
-    const updateOverlayArea = () => {
-      if (hasCustomOverlay) {
-        return;
-      }
+    const cameraWrapper = cameraWrapperRef.current;
 
-      setOverlayArea(getPresetByScreenWidth(window.innerWidth));
-    };
+    if (!cameraWrapper) {
+      return;
+    }
 
-    updateOverlayArea();
-    window.addEventListener('resize', updateOverlayArea);
-
-    return () => window.removeEventListener('resize', updateOverlayArea);
-  }, [hasCustomOverlay]);
-
-  const cropImageToViewportArea = (
-    imageSrc: string,
-    cameraRect: DOMRect,
-    overlayRect: DOMRect,
-  ) =>
-    new Promise<string>((resolve, reject) => {
-      const img = document.createElement('img');
-
-      img.onload = () => {
-        const imageWidth = img.naturalWidth || img.width;
-        const imageHeight = img.naturalHeight || img.height;
-
-        if (!imageWidth || !imageHeight || !cameraRect.width || !cameraRect.height) {
-          reject(new Error('Invalid camera or image dimensions'));
-          return;
-        }
-
-        const overlayX = overlayRect.left - cameraRect.left;
-        const overlayY = overlayRect.top - cameraRect.top;
-        const overlayWidth = overlayRect.width;
-        const overlayHeight = overlayRect.height;
-
-        const relativeX = overlayX / cameraRect.width;
-        const relativeY = overlayY / cameraRect.height;
-        const relativeWidth = overlayWidth / cameraRect.width;
-        const relativeHeight = overlayHeight / cameraRect.height;
-
-        const scale = Math.max(
-          cameraRect.width / imageWidth,
-          cameraRect.height / imageHeight,
-        );
-
-        const displayedWidth = imageWidth * scale;
-        const displayedHeight = imageHeight * scale;
-        const offsetX = (displayedWidth - cameraRect.width) / 2;
-        const offsetY = (displayedHeight - cameraRect.height) / 2;
-
-        const cropXFromRect = (overlayX + offsetX) / scale;
-        const cropYFromRect = (overlayY + offsetY) / scale;
-        const cropWidthFromRect = overlayWidth / scale;
-        const cropHeightFromRect = overlayHeight / scale;
-
-        const cropXFromRelative = relativeX * imageWidth;
-        const cropYFromRelative = relativeY * imageHeight;
-        const cropWidthFromRelative = relativeWidth * imageWidth;
-        const cropHeightFromRelative = relativeHeight * imageHeight;
-
-        const useCoverTransform =
-          displayedWidth > cameraRect.width || displayedHeight > cameraRect.height;
-
-        const rawCropX = useCoverTransform ? cropXFromRect : cropXFromRelative;
-        const rawCropY = useCoverTransform ? cropYFromRect : cropYFromRelative;
-        const rawCropWidth = useCoverTransform
-          ? cropWidthFromRect
-          : cropWidthFromRelative;
-        const rawCropHeight = useCoverTransform
-          ? cropHeightFromRect
-          : cropHeightFromRelative;
-
-        const cropX = Math.max(0, Math.min(Math.floor(rawCropX), imageWidth - 1));
-        const cropY = Math.max(0, Math.min(Math.floor(rawCropY), imageHeight - 1));
-        const cropWidth = Math.max(
-          1,
-          Math.min(Math.floor(rawCropWidth), imageWidth - cropX),
-        );
-        const cropHeight = Math.max(
-          1,
-          Math.min(Math.floor(rawCropHeight), imageHeight - cropY),
-        );
-
-        const canvas = document.createElement('canvas');
-        canvas.width = cropWidth;
-        canvas.height = cropHeight;
-
-        const context = canvas.getContext('2d');
-
-        if (!context) {
-          reject(new Error('Failed to get canvas context'));
-          return;
-        }
-
-        context.drawImage(
-          img,
-          cropX,
-          cropY,
-          cropWidth,
-          cropHeight,
-          0,
-          0,
-          cropWidth,
-          cropHeight,
-        );
-
-        resolve(canvas.toDataURL('image/jpeg', 0.95));
+    const updateSize = () => {
+      const nextSize: Size = {
+        width: cameraWrapper.clientWidth,
+        height: cameraWrapper.clientHeight,
       };
 
-      img.onerror = () => reject(new Error('Failed to load image'));
-      img.src = imageSrc;
+      setCameraSize(nextSize);
+      setViewport(prevViewport => {
+        if (nextSize.width === 0 || nextSize.height === 0) {
+          return prevViewport;
+        }
+
+        const isUninitialized = prevViewport.width > nextSize.width;
+
+        if (isUninitialized) {
+          return createDefaultViewport(nextSize);
+        }
+
+        return clampViewportToContainer(prevViewport, nextSize);
+      });
+    };
+
+    updateSize();
+
+    const resizeObserver = new ResizeObserver(() => {
+      updateSize();
     });
+
+    resizeObserver.observe(cameraWrapper);
+    window.addEventListener('resize', updateSize);
+
+    return () => {
+      resizeObserver.disconnect();
+      window.removeEventListener('resize', updateSize);
+    };
+  }, []);
 
   const handleOcr = async (imageSrc: string) => {
     setLoading(true);
@@ -223,40 +137,73 @@ export default function OcrScanner() {
 
       setExtractedText(result.data.text);
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown OCR error';
-      setExtractedText(`Error extracting text: ${errorMessage}`);
+      setExtractedText('Error extracting text.');
     } finally {
       setLoading(false);
       setProgress(0);
     }
   };
 
+  const handleViewportDragStop: RndDragCallback = (_event, data) => {
+    setViewport(prevViewport =>
+      clampViewportToContainer(
+        {
+          ...prevViewport,
+          x: data.x,
+          y: data.y,
+        },
+        cameraSize,
+      ),
+    );
+  };
+
+  const handleViewportResizeStop: RndResizeCallback = (
+    _event,
+    _direction,
+    ref,
+    _delta,
+    position,
+  ) => {
+    setViewport(
+      clampViewportToContainer(
+        {
+          x: position.x,
+          y: position.y,
+          width: ref.offsetWidth,
+          height: ref.offsetHeight,
+        },
+        cameraSize,
+      ),
+    );
+  };
+
   const captureCameraImage = async () => {
-    if (cameraRef.current) {
-      const cameraRect = cameraWrapperRef.current?.getBoundingClientRect();
-      const overlayRect = scanAreaRef.current?.getBoundingClientRect();
+    if (!cameraRef.current || cameraSize.width === 0 || cameraSize.height === 0) {
+      return;
+    }
 
-      if (!cameraRect || !overlayRect) {
-        setExtractedText('Error cropping captured image: Unable to resolve overlay position');
-        return;
-      }
+    const captured = cameraRef.current.takePhoto();
 
-      const photo = cameraRef.current.takePhoto();
+    if (typeof captured !== 'string') {
+      setExtractedText('Error extracting text.');
+      return;
+    }
 
-      try {
-        const croppedPhoto = await cropImageToViewportArea(
-          photo,
-          cameraRect,
-          overlayRect,
-        );
-        setImage(croppedPhoto);
-        handleOcr(croppedPhoto);
-      } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : 'Unknown crop error';
-        setExtractedText(`Error cropping captured image: ${errorMessage}`);
-      }
+    try {
+      const fullImage = captured;
+      const imageDimensions = await getImageDimensions(fullImage);
+      const cropRect = calculateViewportToImageCoordinates({
+        viewport,
+        container: cameraSize,
+        image: imageDimensions,
+      });
+      const cropped = await cropImageFromBase64(fullImage, cropRect);
+
+      setOriginalImage(fullImage);
+      setCroppedImage(cropped);
+      await handleOcr(cropped);
+    } catch (error) {
+      setExtractedText('Error extracting text.');
     }
   };
 
@@ -269,7 +216,8 @@ export default function OcrScanner() {
 
     reader.onloadend = () => {
       const base64String = reader.result as string;
-      setImage(base64String);
+      setOriginalImage(base64String);
+      setCroppedImage(base64String);
       handleOcr(base64String);
     };
 
@@ -283,26 +231,46 @@ export default function OcrScanner() {
       <div className={styles.cameraWrapper} ref={cameraWrapperRef}>
         <Camera
           facingMode="environment"
-          ref={cameraRef}
+          ref={cameraRef as React.RefObject<unknown>}
           aspectRatio={16 / 9}
           errorMessages={{
             noCameraAccessible: 'No camera device found',
           }}
         />
 
-        <div className={styles.overlayMask}>
-          <div
-            ref={scanAreaRef}
-            className={styles.scanArea}
-            style={{
-              left: `${overlayArea.x * 100}%`,
-              top: `${overlayArea.y * 100}%`,
-              width: `${overlayArea.width * 100}%`,
-              height: `${overlayArea.height * 100}%`,
-            }}>
-            <span className={styles.scanLabel}>Posisikan NIK di area ini</span>
+        {cameraSize.width > 0 && cameraSize.height > 0 && (
+          <div className={styles.viewportLayer}>
+            <Rnd
+              bounds="parent"
+              className={styles.viewportRnd}
+              size={{width: viewport.width, height: viewport.height}}
+              position={{x: viewport.x, y: viewport.y}}
+              minWidth={MIN_VIEWPORT_WIDTH}
+              minHeight={MIN_VIEWPORT_HEIGHT}
+              enableResizing={{
+                top: false,
+                right: false,
+                bottom: false,
+                left: false,
+                topRight: true,
+                bottomRight: true,
+                bottomLeft: true,
+                topLeft: true,
+              }}
+              resizeHandleClasses={{
+                topLeft: styles.topLeftHandle,
+                topRight: styles.topRightHandle,
+                bottomLeft: styles.bottomLeftHandle,
+                bottomRight: styles.bottomRightHandle,
+              }}
+              onDragStop={handleViewportDragStop}
+              onResizeStop={handleViewportResizeStop}>
+              <div className={styles.viewportContent}>
+                <span className={styles.viewportLabel}>OCR AREA</span>
+              </div>
+            </Rnd>
           </div>
-        </div>
+        )}
       </div>
 
       <div className={styles.controls}>
@@ -313,95 +281,17 @@ export default function OcrScanner() {
           Capture & Scan
         </button>
 
-        <label htmlFor="ocr-image-upload" className={styles.uploadButton}>
+        <label className={styles.uploadButton}>
           Upload Image
+          <input
+            type="file"
+            accept="image/*"
+            onChange={handleFileUpload}
+            className={styles.hiddenInput}
+            disabled={loading}
+          />
         </label>
-
-        <button
-          onClick={() => setIsCalibrationOpen(previous => !previous)}
-          className={styles.calibrationButton}
-          type="button">
-          {isCalibrationOpen ? 'Tutup Kalibrasi' : 'Kalibrasi Overlay'}
-        </button>
-
-        <input
-          id="ocr-image-upload"
-          type="file"
-          accept="image/*"
-          onChange={handleFileUpload}
-          className={styles.hiddenInput}
-          disabled={loading}
-        />
       </div>
-
-      {isCalibrationOpen && (
-        <div className={styles.calibrationPanel}>
-          <p className={styles.calibrationTitle}>Kalibrasi Area NIK</p>
-
-          <label className={styles.sliderField}>
-            X: {(overlayArea.x * 100).toFixed(1)}%
-            <input
-              type="range"
-              min="0"
-              max={(1 - overlayArea.width).toFixed(3)}
-              step="0.005"
-              value={overlayArea.x}
-              onChange={event =>
-                updateOverlayAreaValue('x', Number(event.target.value))
-              }
-            />
-          </label>
-
-          <label className={styles.sliderField}>
-            Y: {(overlayArea.y * 100).toFixed(1)}%
-            <input
-              type="range"
-              min="0"
-              max={(1 - overlayArea.height).toFixed(3)}
-              step="0.005"
-              value={overlayArea.y}
-              onChange={event =>
-                updateOverlayAreaValue('y', Number(event.target.value))
-              }
-            />
-          </label>
-
-          <label className={styles.sliderField}>
-            Width: {(overlayArea.width * 100).toFixed(1)}%
-            <input
-              type="range"
-              min="0.4"
-              max="0.95"
-              step="0.005"
-              value={overlayArea.width}
-              onChange={event =>
-                updateOverlayAreaValue('width', Number(event.target.value))
-              }
-            />
-          </label>
-
-          <label className={styles.sliderField}>
-            Height: {(overlayArea.height * 100).toFixed(1)}%
-            <input
-              type="range"
-              min="0.08"
-              max="0.35"
-              step="0.005"
-              value={overlayArea.height}
-              onChange={event =>
-                updateOverlayAreaValue('height', Number(event.target.value))
-              }
-            />
-          </label>
-
-          <button
-            className={styles.resetPresetButton}
-            onClick={resetOverlayToDevicePreset}
-            type="button">
-            Gunakan Preset Device
-          </button>
-        </div>
-      )}
 
       {loading && (
         <div className={styles.progressContainer}>
@@ -411,11 +301,27 @@ export default function OcrScanner() {
         </div>
       )}
 
-      {image && (
+      {originalImage && (
         <div className={styles.imagePreview}>
-          <p className={styles.previewTitle}>Scanned Image:</p>
+          <p className={styles.previewTitle}>Original camera capture:</p>
 
-          <img src={image} alt="Preview" className={styles.previewImage} />
+          <img
+            src={originalImage}
+            alt="Original capture"
+            className={styles.previewImage}
+          />
+        </div>
+      )}
+
+      {croppedImage && (
+        <div className={styles.imagePreview}>
+          <p className={styles.previewTitle}>Cropped OCR area:</p>
+
+          <img
+            src={croppedImage}
+            alt="Cropped OCR area"
+            className={styles.previewImage}
+          />
         </div>
       )}
 
