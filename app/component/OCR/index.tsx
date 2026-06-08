@@ -32,20 +32,9 @@ type VisibleVideoRect = {
   mirrored: boolean;
 };
 
-type ObjectPosition = {
-  x: number;
-  y: number;
-};
-
-type OverlayMapping = {
-  normalizedRect: OverlayArea;
-  videoRect: PixelRect;
-  captureRect: PixelRect;
-  visibleVideoRect: VisibleVideoRect;
-};
-
 type CapturePreview = {
   original: string;
+  viewport: string;
   overlayDebug: string;
   cropped: string;
   processed: string;
@@ -182,48 +171,6 @@ export default function OcrScanner() {
       img.src = imageSrc;
     });
 
-  const parseObjectPosition = (value: string): ObjectPosition => {
-    const parts = value.trim().split(/\s+/);
-    const [xRaw, yRaw = xRaw] = parts;
-
-    const parsePart = (part: string) => {
-      if (part.endsWith('%')) {
-        return clamp(Number(part.replace('%', '')) / 100, 0, 1);
-      }
-
-      if (part === 'left' || part === 'top') {
-        return 0;
-      }
-
-      if (part === 'right' || part === 'bottom') {
-        return 1;
-      }
-
-      return 0.5;
-    };
-
-    return {
-      x: parsePart(xRaw),
-      y: parsePart(yRaw),
-    };
-  };
-
-  const captureFrameFromVideo = (videoElement: HTMLVideoElement) => {
-    const canvas = document.createElement('canvas');
-    canvas.width = videoElement.videoWidth;
-    canvas.height = videoElement.videoHeight;
-
-    const context = canvas.getContext('2d');
-
-    if (!context) {
-      throw new Error('Failed to get canvas context');
-    }
-
-    context.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
-
-    return canvas.toDataURL('image/jpeg', 0.95);
-  };
-
   const getVisibleVideoRect = (): VisibleVideoRect | null => {
     const container = cameraWrapperRef.current;
 
@@ -244,15 +191,17 @@ export default function OcrScanner() {
 
     if (!containerWidth || !containerHeight) return null;
 
-    const scale = Math.max(containerWidth / videoWidth, containerHeight / videoHeight);
-    const renderedWidth = videoWidth * scale;
-    const renderedHeight = videoHeight * scale;
-    const computedStyle = window.getComputedStyle(videoElement);
-    const objectPosition = parseObjectPosition(
-      computedStyle.objectPosition || '50% 50%',
-    );
-    const offsetX = Math.max(0, renderedWidth - containerWidth) * objectPosition.x;
-    const offsetY = Math.max(0, renderedHeight - containerHeight) * objectPosition.y;
+    const videoRect = videoElement.getBoundingClientRect();
+    const renderedWidth = videoRect.width;
+    const renderedHeight = videoRect.height;
+
+    if (!renderedWidth || !renderedHeight) {
+      return null;
+    }
+
+    const scale = renderedWidth / videoWidth;
+    const offsetX = containerRect.left - videoRect.left;
+    const offsetY = containerRect.top - videoRect.top;
 
     return {
       videoWidth,
@@ -268,92 +217,20 @@ export default function OcrScanner() {
     };
   };
 
-  const getOverlayRectInVideoSpace = (
-    visibleVideoRect: VisibleVideoRect,
-  ): OverlayMapping => {
-    const overlayContainerX = overlayArea.x * visibleVideoRect.containerWidth;
-    const overlayContainerY = overlayArea.y * visibleVideoRect.containerHeight;
-    const overlayContainerWidth = overlayArea.width * visibleVideoRect.containerWidth;
-    const overlayContainerHeight = overlayArea.height * visibleVideoRect.containerHeight;
-
-    const normalizedX =
-      (overlayContainerX + visibleVideoRect.offsetX) /
-      visibleVideoRect.renderedWidth;
-    const normalizedY =
-      (overlayContainerY + visibleVideoRect.offsetY) /
-      visibleVideoRect.renderedHeight;
-    const normalizedWidth =
-      overlayContainerWidth / visibleVideoRect.renderedWidth;
-    const normalizedHeight =
-      overlayContainerHeight / visibleVideoRect.renderedHeight;
-
-    const x = clamp(normalizedX, 0, 1);
-    const y = clamp(normalizedY, 0, 1);
-    const width = clamp(normalizedWidth, 0, 1 - x);
-    const height = clamp(normalizedHeight, 0, 1 - y);
-
-    const mappedX = visibleVideoRect.mirrored ? 1 - x - width : x;
-    const normalizedRect = {
-      x: clamp(mappedX, 0, 1 - width),
-      y,
-      width,
-      height,
-    };
-
-    const videoRect = {
-      x: Math.round(normalizedRect.x * visibleVideoRect.videoWidth),
-      y: Math.round(normalizedRect.y * visibleVideoRect.videoHeight),
-      width: Math.round(normalizedRect.width * visibleVideoRect.videoWidth),
-      height: Math.round(normalizedRect.height * visibleVideoRect.videoHeight),
-    };
-
-    return {
-      normalizedRect,
-      videoRect,
-      captureRect: {x: 0, y: 0, width: 0, height: 0},
-      visibleVideoRect,
-    };
-  };
-
-  const cropCapturedImage = async (
-    imageSrc: string,
-    mapping: OverlayMapping,
-  ) => {
+  const cropImageByRect = async (imageSrc: string, rect: PixelRect) => {
     const img = await loadImage(imageSrc);
-    const widthRatio = img.width / mapping.visibleVideoRect.videoWidth;
-    const heightRatio = img.height / mapping.visibleVideoRect.videoHeight;
-    const captureRect = {
-      x: clamp(
-        Math.round(mapping.videoRect.x * widthRatio),
-        0,
-        Math.max(img.width - 1, 0),
-      ),
-      y: clamp(
-        Math.round(mapping.videoRect.y * heightRatio),
-        0,
-        Math.max(img.height - 1, 0),
-      ),
-      width: clamp(
-        Math.round(mapping.videoRect.width * widthRatio),
-        1,
-        img.width,
-      ),
-      height: clamp(
-        Math.round(mapping.videoRect.height * heightRatio),
-        1,
-        img.height,
-      ),
-    };
-
-    captureRect.width = Math.min(captureRect.width, img.width - captureRect.x);
-    captureRect.height = Math.min(
-      captureRect.height,
-      img.height - captureRect.y,
+    const x = Math.round(clamp(rect.x, 0, Math.max(img.naturalWidth - 1, 0)));
+    const y = Math.round(clamp(rect.y, 0, Math.max(img.naturalHeight - 1, 0)));
+    const width = Math.round(
+      clamp(rect.width, 1, Math.max(img.naturalWidth - x, 1)),
+    );
+    const height = Math.round(
+      clamp(rect.height, 1, Math.max(img.naturalHeight - y, 1)),
     );
 
     const canvas = document.createElement('canvas');
-    canvas.width = captureRect.width;
-    canvas.height = captureRect.height;
+    canvas.width = width;
+    canvas.height = height;
 
     const context = canvas.getContext('2d');
 
@@ -361,25 +238,139 @@ export default function OcrScanner() {
       throw new Error('Failed to get canvas context');
     }
 
-    context.drawImage(
-      img,
-      captureRect.x,
-      captureRect.y,
-      captureRect.width,
-      captureRect.height,
-      0,
-      0,
-      captureRect.width,
-      captureRect.height,
-    );
+    context.drawImage(img, x, y, width, height, 0, 0, width, height);
 
     return {
       image: canvas.toDataURL('image/jpeg', 0.95),
-      captureRect,
-      sourceWidth: img.width,
-      sourceHeight: img.height,
+      rect: {x, y, width, height},
+      sourceWidth: img.naturalWidth,
+      sourceHeight: img.naturalHeight,
     };
   };
+
+  const getOverlayRectInImageSpace = (
+    imageWidth: number,
+    imageHeight: number,
+    mirrored: boolean,
+  ): PixelRect => {
+    const width = Math.round(clamp(overlayArea.width * imageWidth, 1, imageWidth));
+    const height = Math.round(clamp(overlayArea.height * imageHeight, 1, imageHeight));
+    const xBase = Math.round(
+      clamp(overlayArea.x * imageWidth, 0, Math.max(imageWidth - width, 0)),
+    );
+    const y = Math.round(
+      clamp(overlayArea.y * imageHeight, 0, Math.max(imageHeight - height, 0)),
+    );
+    const x = mirrored ? Math.max(0, imageWidth - xBase - width) : xBase;
+
+    return {x, y, width, height};
+  };
+
+  async function captureVisibleViewport(): Promise<string> {
+    const container = cameraWrapperRef.current;
+    const videoElement = getVideoElement();
+
+    if (!cameraRef.current || !container || !videoElement) {
+      throw new Error('Camera is not ready');
+    }
+
+    const visibleVideoRect = getVisibleVideoRect();
+
+    if (!visibleVideoRect) {
+      throw new Error('Video metadata unavailable');
+    }
+
+    const photo = cameraRef.current.takePhoto() as string;
+    const image = await loadImage(photo);
+
+    const scaleX = image.naturalWidth / visibleVideoRect.videoWidth;
+    const scaleY = image.naturalHeight / visibleVideoRect.videoHeight;
+
+    const viewportCropRect = {
+      x: Math.round(
+        clamp(
+          (visibleVideoRect.offsetX / visibleVideoRect.renderedWidth) *
+            image.naturalWidth,
+          0,
+          Math.max(image.naturalWidth - 1, 0),
+        ),
+      ),
+      y: Math.round(
+        clamp(
+          (visibleVideoRect.offsetY / visibleVideoRect.renderedHeight) *
+            image.naturalHeight,
+          0,
+          Math.max(image.naturalHeight - 1, 0),
+        ),
+      ),
+      width: Math.round(
+        clamp(
+          (visibleVideoRect.containerWidth / visibleVideoRect.renderedWidth) *
+            image.naturalWidth,
+          1,
+          image.naturalWidth,
+        ),
+      ),
+      height: Math.round(
+        clamp(
+          (visibleVideoRect.containerHeight / visibleVideoRect.renderedHeight) *
+            image.naturalHeight,
+          1,
+          image.naturalHeight,
+        ),
+      ),
+    };
+
+    const croppedViewport = await cropImageByRect(photo, viewportCropRect);
+    const viewportImage = croppedViewport.image;
+    const overlayRect = getOverlayRectInImageSpace(
+      croppedViewport.rect.width,
+      croppedViewport.rect.height,
+      visibleVideoRect.mirrored,
+    );
+    const ocrCrop = await cropImageByRect(viewportImage, overlayRect);
+    const overlayDebug = await drawOverlayDebug(
+      viewportImage,
+      overlayRect,
+      isDebugMode,
+    );
+    const processedImage = await preprocessImageForOcr(ocrCrop.image);
+
+    setCapturePreview({
+      original: photo,
+      viewport: viewportImage,
+      overlayDebug,
+      cropped: ocrCrop.image,
+      processed: processedImage,
+    });
+
+    setDebugInfo({
+      videoWidth: visibleVideoRect.videoWidth,
+      videoHeight: visibleVideoRect.videoHeight,
+      containerWidth: Math.round(visibleVideoRect.containerWidth),
+      containerHeight: Math.round(visibleVideoRect.containerHeight),
+      renderedWidth: Math.round(visibleVideoRect.renderedWidth),
+      renderedHeight: Math.round(visibleVideoRect.renderedHeight),
+      scaleX: Number(scaleX.toFixed(4)),
+      scaleY: Number(scaleY.toFixed(4)),
+      offsetX: Math.round(visibleVideoRect.offsetX),
+      offsetY: Math.round(visibleVideoRect.offsetY),
+      viewportCropX: croppedViewport.rect.x,
+      viewportCropY: croppedViewport.rect.y,
+      viewportCropWidth: croppedViewport.rect.width,
+      viewportCropHeight: croppedViewport.rect.height,
+      cropX: ocrCrop.rect.x,
+      cropY: ocrCrop.rect.y,
+      cropWidth: ocrCrop.rect.width,
+      cropHeight: ocrCrop.rect.height,
+      captureWidth: image.naturalWidth,
+      captureHeight: image.naturalHeight,
+    });
+
+    await handleOcr(processedImage);
+
+    return viewportImage;
+  }
 
   const drawOverlayDebug = async (
     imageSrc: string,
@@ -500,88 +491,9 @@ export default function OcrScanner() {
     }
   };
 
-  const runOcrPipeline = async (
-    originalPhoto: string,
-    mapping: OverlayMapping | null,
-  ) => {
-    const croppedResult = mapping
-      ? await cropCapturedImage(originalPhoto, mapping)
-      : await cropCapturedImage(originalPhoto, {
-          normalizedRect: {x: 0, y: 0, width: 1, height: 1},
-          videoRect: {
-            x: 0,
-            y: 0,
-            width: 1,
-            height: 1,
-          },
-          captureRect: {x: 0, y: 0, width: 0, height: 0},
-          visibleVideoRect: {
-            videoWidth: 1,
-            videoHeight: 1,
-            containerWidth: 1,
-            containerHeight: 1,
-            renderedWidth: 1,
-            renderedHeight: 1,
-            scale: 1,
-            offsetX: 0,
-            offsetY: 0,
-            mirrored: false,
-          },
-        });
-
-    const overlayDebug = await drawOverlayDebug(
-      originalPhoto,
-      croppedResult.captureRect,
-      Boolean(mapping) && isDebugMode,
-    );
-    const processedImage = await preprocessImageForOcr(croppedResult.image);
-
-    setCapturePreview({
-      original: originalPhoto,
-      overlayDebug,
-      cropped: croppedResult.image,
-      processed: processedImage,
-    });
-
-    if (mapping) {
-      setDebugInfo({
-        videoWidth: mapping.visibleVideoRect.videoWidth,
-        videoHeight: mapping.visibleVideoRect.videoHeight,
-        containerWidth: Math.round(mapping.visibleVideoRect.containerWidth),
-        containerHeight: Math.round(mapping.visibleVideoRect.containerHeight),
-        offsetX: Math.round(mapping.visibleVideoRect.offsetX),
-        offsetY: Math.round(mapping.visibleVideoRect.offsetY),
-        cropX: croppedResult.captureRect.x,
-        cropY: croppedResult.captureRect.y,
-        cropWidth: croppedResult.captureRect.width,
-        cropHeight: croppedResult.captureRect.height,
-        captureWidth: croppedResult.sourceWidth,
-        captureHeight: croppedResult.sourceHeight,
-      });
-    } else {
-      setDebugInfo(null);
-    }
-
-    await handleOcr(processedImage);
-  };
-
   const captureCameraImage = async () => {
-    if (!cameraRef.current) {
-      return;
-    }
-
-    const visibleVideoRect = getVisibleVideoRect();
-    const videoElement = getVideoElement();
-
-    if (!visibleVideoRect || !videoElement) {
-      setExtractedText('Error cropping captured image: Video metadata unavailable');
-      return;
-    }
-
     try {
-      const photo = captureFrameFromVideo(videoElement);
-      const mapping = getOverlayRectInVideoSpace(visibleVideoRect);
-      await runOcrPipeline(photo, mapping);
+      await captureVisibleViewport();
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown crop error';
@@ -601,7 +513,37 @@ export default function OcrScanner() {
       const base64String = reader.result as string;
 
       try {
-        await runOcrPipeline(base64String, null);
+        const uploaded = await loadImage(base64String);
+        const overlayRect = getOverlayRectInImageSpace(
+          uploaded.naturalWidth,
+          uploaded.naturalHeight,
+          false,
+        );
+        const ocrCrop = await cropImageByRect(base64String, overlayRect);
+        const processedImage = await preprocessImageForOcr(ocrCrop.image);
+        const overlayDebug = await drawOverlayDebug(
+          base64String,
+          overlayRect,
+          isDebugMode,
+        );
+
+        setCapturePreview({
+          original: base64String,
+          viewport: base64String,
+          overlayDebug,
+          cropped: ocrCrop.image,
+          processed: processedImage,
+        });
+        setDebugInfo({
+          captureWidth: uploaded.naturalWidth,
+          captureHeight: uploaded.naturalHeight,
+          cropX: ocrCrop.rect.x,
+          cropY: ocrCrop.rect.y,
+          cropWidth: ocrCrop.rect.width,
+          cropHeight: ocrCrop.rect.height,
+        });
+
+        await handleOcr(processedImage);
       } catch (error) {
         const errorMessage =
           error instanceof Error ? error.message : 'Unknown OCR error';
@@ -775,6 +717,15 @@ export default function OcrScanner() {
             <img
               src={capturePreview.original}
               alt="Original capture"
+              className={styles.previewImage}
+            />
+          </div>
+
+          <div className={styles.imagePreview}>
+            <p className={styles.previewTitle}>Visible Camera Viewport</p>
+            <img
+              src={capturePreview.viewport}
+              alt="Visible camera viewport"
               className={styles.previewImage}
             />
           </div>
