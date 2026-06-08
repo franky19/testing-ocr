@@ -1,0 +1,123 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 24px;
+  padding: 24px;
+  max-width: 768px;
+  margin: 0 auto;
+}
+
+.title {
+  font-size: 28px;
+  font-weight: bold;
+}
+
+.cameraWrapper {
+  position: relative;
+  width: 100%;
+  height: 320px;
+  background: #000;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.controls {
+  display: flex;
+  gap: 16px;
+}
+
+.button {
+  background: #2563eb;
+  color: #fff;
+  padding: 12px 20px;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.button:hover {
+  background: #1d4ed8;
+}
+
+.button:disabled {
+  background: #94a3b8;
+  cursor: not-allowed;
+}
+
+.uploadButton {
+  background: #4b5563;
+  color: #fff;
+  padding: 12px 20px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.uploadButton:hover {
+  background: #374151;
+}
+
+.hiddenInput {
+  display: none;
+}
+
+.progressContainer {
+  width: 100%;
+  height: 18px;
+  background: #e5e7eb;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.progressBar {
+  height: 100%;
+  background: #2563eb;
+  color: white;
+  font-size: 12px;
+  text-align: center;
+  line-height: 18px;
+  transition: width 0.3s ease;
+}
+
+.imagePreview {
+  margin-top: 16px;
+  width: 100%;
+}
+
+.previewTitle {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.previewImage {
+  max-height: 300px;
+  max-width: 100%;
+  border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
+}
+
+.resultContainer {
+  width: 100%;
+  background: #f3f4f6;
+  padding: 16px;
+  border-radius: 8px;
+  border: 1px solid #d1d5db;
+}
+
+.resultTitle {
+  font-weight: bold;
+  color: #374151;
+  margin-bottom: 8px;
+}
+
+.resultText {
+  white-space: pre-wrap;
+  background: #fff;
+  padding: 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  color: #1f2937;
+}

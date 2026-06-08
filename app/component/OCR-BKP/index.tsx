@@ -2,14 +2,210 @@
 
 import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {Camera} from 'react-camera-pro';
-import {DebugOverlayData} from './ocr.type';
-import {
-  calculateViewportMapping,
-  cropImageToOverlay,
-  DEBUG_OVERLAY,
-  loadImageFromSource,
-  runOCR,
-} from './ocr.helper';
+import Tesseract from 'tesseract.js';
+
+const DEBUG_OVERLAY = true;
+
+type ViewportMapping = {
+  videoWidth: number;
+  videoHeight: number;
+  imageWidth: number;
+  imageHeight: number;
+  viewportWidth: number;
+  viewportHeight: number;
+  overlayLeft: number;
+  overlayTop: number;
+  overlayWidth: number;
+  overlayHeight: number;
+  renderedWidth: number;
+  renderedHeight: number;
+  scale: number;
+  offsetX: number;
+  offsetY: number;
+  normalizedX: number;
+  normalizedY: number;
+  normalizedWidth: number;
+  normalizedHeight: number;
+  sourceX: number;
+  sourceY: number;
+  sourceWidth: number;
+  sourceHeight: number;
+};
+
+type CropRect = {
+  sourceX: number;
+  sourceY: number;
+  sourceWidth: number;
+  sourceHeight: number;
+};
+
+type DebugOverlayData = {
+  mapping: ViewportMapping;
+};
+
+const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
+
+const loadImageFromSource = (imageSrc: string): Promise<HTMLImageElement> => {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error('Failed to load image for overlay crop.'));
+    image.src = imageSrc;
+  });
+};
+
+function calculateCropFromViewport(
+  videoWidth: number,
+  videoHeight: number,
+  viewportWidth: number,
+  viewportHeight: number,
+  overlayRect: {
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  },
+): CropRect {
+  const scale = Math.max(viewportWidth / videoWidth, viewportHeight / videoHeight);
+  const renderedWidth = videoWidth * scale;
+  const renderedHeight = videoHeight * scale;
+  const offsetX = (viewportWidth - renderedWidth) / 2;
+  const offsetY = (viewportHeight - renderedHeight) / 2;
+
+  const sourceX1 = (overlayRect.left - offsetX) / scale;
+  const sourceY1 = (overlayRect.top - offsetY) / scale;
+  const sourceX2 = (overlayRect.left + overlayRect.width - offsetX) / scale;
+  const sourceY2 = (overlayRect.top + overlayRect.height - offsetY) / scale;
+
+  const clampedX1 = clamp(sourceX1, 0, videoWidth);
+  const clampedY1 = clamp(sourceY1, 0, videoHeight);
+  const clampedX2 = clamp(sourceX2, 0, videoWidth);
+  const clampedY2 = clamp(sourceY2, 0, videoHeight);
+
+  return {
+    sourceX: clampedX1,
+    sourceY: clampedY1,
+    sourceWidth: Math.max(1, clampedX2 - clampedX1),
+    sourceHeight: Math.max(1, clampedY2 - clampedY1),
+  };
+}
+
+const calculateViewportMapping = ({
+  videoWidth,
+  videoHeight,
+  imageWidth,
+  imageHeight,
+  viewportWidth,
+  viewportHeight,
+  overlayRect,
+}: {
+  videoWidth: number;
+  videoHeight: number;
+  imageWidth: number;
+  imageHeight: number;
+  viewportWidth: number;
+  viewportHeight: number;
+  overlayRect: {
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  };
+}): ViewportMapping => {
+  const scale = Math.max(viewportWidth / videoWidth, viewportHeight / videoHeight);
+  const renderedWidth = videoWidth * scale;
+  const renderedHeight = videoHeight * scale;
+  const offsetX = (viewportWidth - renderedWidth) / 2;
+  const offsetY = (viewportHeight - renderedHeight) / 2;
+
+  const videoCrop = calculateCropFromViewport(videoWidth, videoHeight, viewportWidth, viewportHeight, overlayRect);
+
+  const normalizedX = videoCrop.sourceX / videoWidth;
+  const normalizedY = videoCrop.sourceY / videoHeight;
+  const normalizedX2 = (videoCrop.sourceX + videoCrop.sourceWidth) / videoWidth;
+  const normalizedY2 = (videoCrop.sourceY + videoCrop.sourceHeight) / videoHeight;
+
+  const sourceX1 = clamp(normalizedX * imageWidth, 0, imageWidth);
+  const sourceY1 = clamp(normalizedY * imageHeight, 0, imageHeight);
+  const sourceX2 = clamp(normalizedX2 * imageWidth, 0, imageWidth);
+  const sourceY2 = clamp(normalizedY2 * imageHeight, 0, imageHeight);
+
+  const clampedX1 = sourceX1;
+  const clampedY1 = sourceY1;
+  const clampedX2 = sourceX2;
+  const clampedY2 = sourceY2;
+
+  return {
+    videoWidth,
+    videoHeight,
+    imageWidth,
+    imageHeight,
+    viewportWidth,
+    viewportHeight,
+    overlayLeft: overlayRect.left,
+    overlayTop: overlayRect.top,
+    overlayWidth: overlayRect.width,
+    overlayHeight: overlayRect.height,
+    renderedWidth,
+    renderedHeight,
+    scale,
+    offsetX,
+    offsetY,
+    normalizedX,
+    normalizedY,
+    normalizedWidth: Math.max(0, normalizedX2 - normalizedX),
+    normalizedHeight: Math.max(0, normalizedY2 - normalizedY),
+    sourceX: clampedX1,
+    sourceY: clampedY1,
+    sourceWidth: Math.max(1, clampedX2 - clampedX1),
+    sourceHeight: Math.max(1, clampedY2 - clampedY1),
+  };
+};
+
+const cropImageToOverlay = async (imageSrc: string, cropRect: CropRect): Promise<string> => {
+  const image = await loadImageFromSource(imageSrc);
+  const canvas = document.createElement('canvas');
+
+  canvas.width = Math.round(cropRect.sourceWidth);
+  canvas.height = Math.round(cropRect.sourceHeight);
+
+  const context = canvas.getContext('2d');
+  if (!context) {
+    throw new Error('Failed to create canvas context for overlay crop.');
+  }
+
+  context.drawImage(
+    image,
+    cropRect.sourceX,
+    cropRect.sourceY,
+    cropRect.sourceWidth,
+    cropRect.sourceHeight,
+    0,
+    0,
+    canvas.width,
+    canvas.height,
+  );
+
+  return canvas.toDataURL('image/jpeg', 0.95);
+};
+
+const runOCR = async ({
+  imageSrc,
+  setProgress,
+}: {
+  imageSrc: string;
+  setProgress: React.Dispatch<React.SetStateAction<number>>;
+}) => {
+  const result = await Tesseract.recognize(imageSrc, 'eng', {
+    logger: message => {
+      if (message.status === 'recognizing text') {
+        setProgress(Math.round(message.progress * 100));
+      }
+    },
+  });
+
+  return result.data.text;
+};
 
 export default function OcrScanner() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -23,8 +219,7 @@ export default function OcrScanner() {
   const [overlayWidth, setOverlayWidth] = useState(350);
   const [overlayHeight, setOverlayHeight] = useState(70);
   const [cameraViewport, setCameraViewport] = useState({width: 0, height: 0});
-  const [debugOverlayData, setDebugOverlayData] =
-    useState<DebugOverlayData | null>(null);
+  const [debugOverlayData, setDebugOverlayData] = useState<DebugOverlayData | null>(null);
 
   useEffect(() => {
     const wrapper = cameraWrapperRef.current;
@@ -58,12 +253,7 @@ export default function OcrScanner() {
       width: Math.min(overlayWidth, safeWidth),
       height: Math.min(overlayHeight, safeHeight),
     };
-  }, [
-    cameraViewport.height,
-    cameraViewport.width,
-    overlayHeight,
-    overlayWidth,
-  ]);
+  }, [cameraViewport.height, cameraViewport.width, overlayHeight, overlayWidth]);
 
   const containerStyle: React.CSSProperties = {
     display: 'flex',
@@ -115,9 +305,7 @@ export default function OcrScanner() {
     position: 'absolute',
     left: '50%',
     top: '50%',
-    transform: `translate(-50%, calc(-50% - ${
-      effectiveOverlaySize.height / 2 + 18
-    }px))`,
+    transform: `translate(-50%, calc(-50% - ${effectiveOverlaySize.height / 2 + 18}px))`,
     background: 'rgba(0, 255, 102, 0.18)',
     color: '#d1fae5',
     border: '1px solid #00FF66',
@@ -172,19 +360,19 @@ export default function OcrScanner() {
     transition: 'background 0.2s ease',
   };
 
-  // const uploadButtonStyle: React.CSSProperties = {
-  //   background: '#4b5563',
-  //   color: '#fff',
-  //   padding: '12px 20px',
-  //   borderRadius: '8px',
-  //   cursor: loading ? 'not-allowed' : 'pointer',
-  //   transition: 'background 0.2s ease',
-  //   opacity: loading ? 0.7 : 1,
-  // };
+  const uploadButtonStyle: React.CSSProperties = {
+    background: '#4b5563',
+    color: '#fff',
+    padding: '12px 20px',
+    borderRadius: '8px',
+    cursor: loading ? 'not-allowed' : 'pointer',
+    transition: 'background 0.2s ease',
+    opacity: loading ? 0.7 : 1,
+  };
 
-  // const hiddenInputStyle: React.CSSProperties = {
-  //   display: 'none',
-  // };
+  const hiddenInputStyle: React.CSSProperties = {
+    display: 'none',
+  };
 
   const progressContainerStyle: React.CSSProperties = {
     width: '100%',
@@ -276,11 +464,7 @@ export default function OcrScanner() {
     if (!cameraRef.current || !cameraWrapperRef.current) return;
 
     const videoElement = cameraWrapperRef.current.querySelector('video');
-    if (
-      !videoElement ||
-      !videoElement.videoWidth ||
-      !videoElement.videoHeight
-    ) {
+    if (!videoElement || !videoElement.videoWidth || !videoElement.videoHeight) {
       setExtractedText('Camera stream belum siap. Coba lagi beberapa saat.');
       return;
     }
@@ -323,21 +507,21 @@ export default function OcrScanner() {
     }
   };
 
-  // const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-  //   const file = e.target.files?.[0];
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
 
-  //   if (!file) return;
+    if (!file) return;
 
-  //   const reader = new FileReader();
+    const reader = new FileReader();
 
-  //   reader.onloadend = () => {
-  //     const base64String = reader.result as string;
-  //     setImage(base64String);
-  //     executeOcr(base64String);
-  //   };
+    reader.onloadend = () => {
+      const base64String = reader.result as string;
+      setImage(base64String);
+      executeOcr(base64String);
+    };
 
-  //   reader.readAsDataURL(file);
-  // };
+    reader.readAsDataURL(file);
+  };
 
   return (
     <div style={containerStyle}>
@@ -429,41 +613,28 @@ export default function OcrScanner() {
         <div style={debugPanelStyle}>
           <div>DEBUG_OVERLAY: ON</div>
           <div>
-            Viewport: {Math.round(cameraViewport.width)} x{' '}
-            {Math.round(cameraViewport.height)} px
+            Viewport: {Math.round(cameraViewport.width)} x {Math.round(cameraViewport.height)} px
           </div>
           <div>
-            Overlay: {Math.round(effectiveOverlaySize.width)} x{' '}
-            {Math.round(effectiveOverlaySize.height)} px
+            Overlay: {Math.round(effectiveOverlaySize.width)} x {Math.round(effectiveOverlaySize.height)} px
           </div>
           {debugOverlayData && (
             <>
               <div>
-                Video asli: {Math.round(debugOverlayData.mapping.videoWidth)} x{' '}
-                {Math.round(debugOverlayData.mapping.videoHeight)} px
+                Video asli: {Math.round(debugOverlayData.mapping.videoWidth)} x {Math.round(debugOverlayData.mapping.videoHeight)} px
               </div>
               <div>
-                Image asli: {Math.round(debugOverlayData.mapping.imageWidth)} x{' '}
-                {Math.round(debugOverlayData.mapping.imageHeight)} px
+                Image asli: {Math.round(debugOverlayData.mapping.imageWidth)} x {Math.round(debugOverlayData.mapping.imageHeight)} px
+              </div>
+              <div>Scaling ratio: {debugOverlayData.mapping.scale.toFixed(4)}</div>
+              <div>
+                Offset: X={debugOverlayData.mapping.offsetX.toFixed(2)}, Y={debugOverlayData.mapping.offsetY.toFixed(2)}
               </div>
               <div>
-                Scaling ratio: {debugOverlayData.mapping.scale.toFixed(4)}
+                Crop source: X={debugOverlayData.mapping.sourceX.toFixed(2)}, Y={debugOverlayData.mapping.sourceY.toFixed(2)}, W={debugOverlayData.mapping.sourceWidth.toFixed(2)}, H={debugOverlayData.mapping.sourceHeight.toFixed(2)}
               </div>
               <div>
-                Offset: X={debugOverlayData.mapping.offsetX.toFixed(2)}, Y=
-                {debugOverlayData.mapping.offsetY.toFixed(2)}
-              </div>
-              <div>
-                Crop source: X={debugOverlayData.mapping.sourceX.toFixed(2)}, Y=
-                {debugOverlayData.mapping.sourceY.toFixed(2)}, W=
-                {debugOverlayData.mapping.sourceWidth.toFixed(2)}, H=
-                {debugOverlayData.mapping.sourceHeight.toFixed(2)}
-              </div>
-              <div>
-                Normalized: X={debugOverlayData.mapping.normalizedX.toFixed(4)},
-                Y={debugOverlayData.mapping.normalizedY.toFixed(4)}, W=
-                {debugOverlayData.mapping.normalizedWidth.toFixed(4)}, H=
-                {debugOverlayData.mapping.normalizedHeight.toFixed(4)}
+                Normalized: X={debugOverlayData.mapping.normalizedX.toFixed(4)}, Y={debugOverlayData.mapping.normalizedY.toFixed(4)}, W={debugOverlayData.mapping.normalizedWidth.toFixed(4)}, H={debugOverlayData.mapping.normalizedHeight.toFixed(4)}
               </div>
             </>
           )}
@@ -471,14 +642,11 @@ export default function OcrScanner() {
       )}
 
       <div style={controlsStyle}>
-        <button
-          onClick={captureCameraImage}
-          style={buttonStyle}
-          disabled={loading}>
+        <button onClick={captureCameraImage} style={buttonStyle} disabled={loading}>
           Capture & Scan
         </button>
 
-        {/* <label style={uploadButtonStyle}>
+        <label style={uploadButtonStyle}>
           Upload Image
           <input
             type="file"
@@ -487,12 +655,14 @@ export default function OcrScanner() {
             style={hiddenInputStyle}
             disabled={loading}
           />
-        </label> */}
+        </label>
       </div>
 
       {loading && (
         <div style={progressContainerStyle}>
-          <div style={progressBarStyle}>{progress}%</div>
+          <div style={progressBarStyle}>
+            {progress}%
+          </div>
         </div>
       )}
 
