@@ -353,7 +353,7 @@ const buildEnhancedFrame = async (
 
   const ctx = workingCanvas.getContext("2d", {
     willReadFrequently: true,
-  });
+  }) as CanvasRenderingContext2D;
 
   if (!ctx) {
     throw new Error("Unable to create canvas context");
