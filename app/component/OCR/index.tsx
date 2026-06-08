@@ -191,17 +191,16 @@ export default function OcrScanner() {
 
     if (!containerWidth || !containerHeight) return null;
 
-    const videoRect = videoElement.getBoundingClientRect();
-    const renderedWidth = videoRect.width;
-    const renderedHeight = videoRect.height;
-
-    if (!renderedWidth || !renderedHeight) {
-      return null;
-    }
-
-    const scale = renderedWidth / videoWidth;
-    const offsetX = containerRect.left - videoRect.left;
-    const offsetY = containerRect.top - videoRect.top;
+    // object-fit: cover: scale so the video fills the container, then center.
+    // offsetX/Y = how many rendered pixels are hidden behind each container edge.
+    const scale = Math.max(
+      containerWidth / videoWidth,
+      containerHeight / videoHeight,
+    );
+    const renderedWidth = videoWidth * scale;
+    const renderedHeight = videoHeight * scale;
+    const offsetX = (renderedWidth - containerWidth) / 2;
+    const offsetY = (renderedHeight - containerHeight) / 2;
 
     return {
       videoWidth,
@@ -248,129 +247,121 @@ export default function OcrScanner() {
     };
   };
 
-  const getOverlayRectInImageSpace = (
-    imageWidth: number,
-    imageHeight: number,
-    mirrored: boolean,
-  ): PixelRect => {
-    const width = Math.round(clamp(overlayArea.width * imageWidth, 1, imageWidth));
-    const height = Math.round(clamp(overlayArea.height * imageHeight, 1, imageHeight));
-    const xBase = Math.round(
-      clamp(overlayArea.x * imageWidth, 0, Math.max(imageWidth - width, 0)),
-    );
-    const y = Math.round(
-      clamp(overlayArea.y * imageHeight, 0, Math.max(imageHeight - height, 0)),
-    );
-    const x = mirrored ? Math.max(0, imageWidth - xBase - width) : xBase;
+  // ─────────────────────────────────────────────────────────────────────────
+  // captureVisibleViewport
+  //
+  // Pipeline:
+  //   takePhoto()  →  crop to visible viewport  →  crop overlay NIK area  →  OCR
+  //
+  // Key formula (object-fit: cover):
+  //   scale        = Math.max(containerW / videoW, containerH / videoH)
+  //   offsetX      = (videoW * scale - containerW) / 2   ← pixels hidden on each side
+  //   offsetY      = (videoH * scale - containerH) / 2
+  //
+  //   cropX (native video space) = (overlayLeft_px + offsetX) / scale
+  //   cropY (native video space) = (overlayTop_px  + offsetY) / scale
+  //   cropW (native video space) = overlayWidth_px  / scale
+  //   cropH (native video space) = overlayHeight_px / scale
+  //
+  //   Convert to photo pixels: multiply by (photo.naturalWidth / videoWidth)
+  // ─────────────────────────────────────────────────────────────────────────
+  const captureVisibleViewport = async (): Promise<string> => {
+    if (!cameraRef.current) throw new Error('Camera ref is not ready');
 
-    return {x, y, width, height};
-  };
+    const vvr = getVisibleVideoRect();
+    if (!vvr) throw new Error('Video metadata is not ready');
 
-  async function captureVisibleViewport(): Promise<string> {
-    const container = cameraWrapperRef.current;
-    const videoElement = getVideoElement();
+    // ── Step 1: full-resolution photo from camera ──────────────────────────
+    const fullPhoto = cameraRef.current.takePhoto() as string;
+    const img = await loadImage(fullPhoto);
+    const photoW = img.naturalWidth;
+    const photoH = img.naturalHeight;
 
-    if (!cameraRef.current || !container || !videoElement) {
-      throw new Error('Camera is not ready');
-    }
+    // ── Step 2: photo ↔ native-video scale factors ─────────────────────────
+    const scaleX = photoW / vvr.videoWidth;
+    const scaleY = photoH / vvr.videoHeight;
 
-    const visibleVideoRect = getVisibleVideoRect();
+    // ── Step 3: crop full photo to the area user sees (viewport) ──────────
+    //   In native video space the visible region starts at (offsetX/scale)
+    const viewportCrop = await cropImageByRect(fullPhoto, {
+      x: (vvr.offsetX / vvr.scale) * scaleX,
+      y: (vvr.offsetY / vvr.scale) * scaleY,
+      width: (vvr.containerWidth / vvr.scale) * scaleX,
+      height: (vvr.containerHeight / vvr.scale) * scaleY,
+    });
 
-    if (!visibleVideoRect) {
-      throw new Error('Video metadata unavailable');
-    }
+    // ── Step 4: overlay in DOM pixels (relative to container top-left) ─────
+    const overlayLeft = overlayArea.x * vvr.containerWidth;
+    const overlayTop = overlayArea.y * vvr.containerHeight;
+    const overlayPxW = overlayArea.width * vvr.containerWidth;
+    const overlayPxH = overlayArea.height * vvr.containerHeight;
 
-    const photo = cameraRef.current.takePhoto() as string;
-    const image = await loadImage(photo);
+    // ── Step 5: convert overlay DOM → native video space ──────────────────
+    //   Adding offsetX/Y accounts for the video area hidden by object-fit cover
+    const videoCropX = (overlayLeft + vvr.offsetX) / vvr.scale;
+    const videoCropY = (overlayTop + vvr.offsetY) / vvr.scale;
+    const videoCropW = overlayPxW / vvr.scale;
+    const videoCropH = overlayPxH / vvr.scale;
 
-    const scaleX = image.naturalWidth / visibleVideoRect.videoWidth;
-    const scaleY = image.naturalHeight / visibleVideoRect.videoHeight;
+    // ── Step 6: crop OCR area directly from full photo ────────────────────
+    const ocrCrop = await cropImageByRect(fullPhoto, {
+      x: videoCropX * scaleX,
+      y: videoCropY * scaleY,
+      width: videoCropW * scaleX,
+      height: videoCropH * scaleY,
+    });
 
-    const viewportCropRect = {
-      x: Math.round(
-        clamp(
-          (visibleVideoRect.offsetX / visibleVideoRect.renderedWidth) *
-            image.naturalWidth,
-          0,
-          Math.max(image.naturalWidth - 1, 0),
-        ),
-      ),
-      y: Math.round(
-        clamp(
-          (visibleVideoRect.offsetY / visibleVideoRect.renderedHeight) *
-            image.naturalHeight,
-          0,
-          Math.max(image.naturalHeight - 1, 0),
-        ),
-      ),
-      width: Math.round(
-        clamp(
-          (visibleVideoRect.containerWidth / visibleVideoRect.renderedWidth) *
-            image.naturalWidth,
-          1,
-          image.naturalWidth,
-        ),
-      ),
-      height: Math.round(
-        clamp(
-          (visibleVideoRect.containerHeight / visibleVideoRect.renderedHeight) *
-            image.naturalHeight,
-          1,
-          image.naturalHeight,
-        ),
-      ),
+    // ── Step 7: draw red debug rect on viewport image ─────────────────────
+    //   On the viewport image the overlay rect is at:
+    //     rectX = (overlayLeft / scale) * scaleX
+    //     rectY = (overlayTop  / scale) * scaleY
+    //   (Because viewport image was cropped starting at offsetX/scale)
+    const debugRect: PixelRect = {
+      x: (overlayLeft / vvr.scale) * scaleX,
+      y: (overlayTop / vvr.scale) * scaleY,
+      width: (overlayPxW / vvr.scale) * scaleX,
+      height: (overlayPxH / vvr.scale) * scaleY,
     };
-
-    const croppedViewport = await cropImageByRect(photo, viewportCropRect);
-    const viewportImage = croppedViewport.image;
-    const overlayRect = getOverlayRectInImageSpace(
-      croppedViewport.rect.width,
-      croppedViewport.rect.height,
-      visibleVideoRect.mirrored,
-    );
-    const ocrCrop = await cropImageByRect(viewportImage, overlayRect);
     const overlayDebug = await drawOverlayDebug(
-      viewportImage,
-      overlayRect,
+      viewportCrop.image,
+      debugRect,
       isDebugMode,
     );
+
     const processedImage = await preprocessImageForOcr(ocrCrop.image);
 
     setCapturePreview({
-      original: photo,
-      viewport: viewportImage,
+      original: fullPhoto,
+      viewport: viewportCrop.image,
       overlayDebug,
       cropped: ocrCrop.image,
       processed: processedImage,
     });
 
     setDebugInfo({
-      videoWidth: visibleVideoRect.videoWidth,
-      videoHeight: visibleVideoRect.videoHeight,
-      containerWidth: Math.round(visibleVideoRect.containerWidth),
-      containerHeight: Math.round(visibleVideoRect.containerHeight),
-      renderedWidth: Math.round(visibleVideoRect.renderedWidth),
-      renderedHeight: Math.round(visibleVideoRect.renderedHeight),
+      videoWidth: vvr.videoWidth,
+      videoHeight: vvr.videoHeight,
+      containerWidth: Math.round(vvr.containerWidth),
+      containerHeight: Math.round(vvr.containerHeight),
+      renderedWidth: Math.round(vvr.renderedWidth),
+      renderedHeight: Math.round(vvr.renderedHeight),
+      scale: Number(vvr.scale.toFixed(4)),
       scaleX: Number(scaleX.toFixed(4)),
       scaleY: Number(scaleY.toFixed(4)),
-      offsetX: Math.round(visibleVideoRect.offsetX),
-      offsetY: Math.round(visibleVideoRect.offsetY),
-      viewportCropX: croppedViewport.rect.x,
-      viewportCropY: croppedViewport.rect.y,
-      viewportCropWidth: croppedViewport.rect.width,
-      viewportCropHeight: croppedViewport.rect.height,
-      cropX: ocrCrop.rect.x,
-      cropY: ocrCrop.rect.y,
-      cropWidth: ocrCrop.rect.width,
-      cropHeight: ocrCrop.rect.height,
-      captureWidth: image.naturalWidth,
-      captureHeight: image.naturalHeight,
+      offsetX: Math.round(vvr.offsetX),
+      offsetY: Math.round(vvr.offsetY),
+      videoCropX: Math.round(videoCropX),
+      videoCropY: Math.round(videoCropY),
+      videoCropWidth: Math.round(videoCropW),
+      videoCropHeight: Math.round(videoCropH),
+      captureWidth: photoW,
+      captureHeight: photoH,
     });
 
     await handleOcr(processedImage);
 
-    return viewportImage;
-  }
+    return viewportCrop.image;
+  };
 
   const drawOverlayDebug = async (
     imageSrc: string,
@@ -513,12 +504,17 @@ export default function OcrScanner() {
       const base64String = reader.result as string;
 
       try {
+        // For uploaded images there is no camera scaling; treat image as viewport.
+        // Overlay fractions map directly onto image dimensions.
         const uploaded = await loadImage(base64String);
-        const overlayRect = getOverlayRectInImageSpace(
-          uploaded.naturalWidth,
-          uploaded.naturalHeight,
-          false,
-        );
+        const imgW = uploaded.naturalWidth;
+        const imgH = uploaded.naturalHeight;
+        const overlayRect: PixelRect = {
+          x: overlayArea.x * imgW,
+          y: overlayArea.y * imgH,
+          width: overlayArea.width * imgW,
+          height: overlayArea.height * imgH,
+        };
         const ocrCrop = await cropImageByRect(base64String, overlayRect);
         const processedImage = await preprocessImageForOcr(ocrCrop.image);
         const overlayDebug = await drawOverlayDebug(
@@ -535,8 +531,8 @@ export default function OcrScanner() {
           processed: processedImage,
         });
         setDebugInfo({
-          captureWidth: uploaded.naturalWidth,
-          captureHeight: uploaded.naturalHeight,
+          captureWidth: imgW,
+          captureHeight: imgH,
           cropX: ocrCrop.rect.x,
           cropY: ocrCrop.rect.y,
           cropWidth: ocrCrop.rect.width,
