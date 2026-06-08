@@ -189,6 +189,7 @@ export default function OcrScanner() {
   const [extractedText, setExtractedText] = useState("");
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [numberOfCameras, setNumberOfCameras] = useState(0);
 
   const handleOcr = async (imageSrc: string) => {
     setLoading(true);
@@ -252,11 +253,44 @@ export default function OcrScanner() {
       <div style={styles.cameraWrapper} ref={cameraWrapperRef}>
         <Camera
           ref={cameraRef}
+          facingMode="environment"
           aspectRatio={16 / 9}
+          numberOfCamerasCallback={setNumberOfCameras}
           errorMessages={{
             noCameraAccessible: "No camera device found",
+            permissionDenied: "Permission denied",
+            switchCamera: "Cannot switch camera",
+            canvas: "Canvas not supported",
           }}
         />
+
+        {/* Switch camera overlay — only shown when device has >1 camera */}
+        {numberOfCameras > 1 && (
+          <button
+            onClick={() => cameraRef.current?.switchCamera()}
+            style={{
+              position: "absolute",
+              top: 12,
+              right: 12,
+              zIndex: 10,
+              background: "rgba(0,0,0,0.45)",
+              border: "none",
+              borderRadius: "50%",
+              width: 44,
+              height: 44,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "#fff",
+              fontSize: 22,
+            }}
+            title="Switch camera"
+            aria-label="Switch camera"
+          >
+            🔄
+          </button>
+        )}
       </div>
 
       <div style={styles.controls}>
