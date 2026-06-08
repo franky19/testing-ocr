@@ -38,7 +38,7 @@
     "sass": "^1.68.0",
     "schema-dts": "^1.1.2",
     "schema-dts-gen": "^1.1.2",
-    "styled-components": "^6.0.8",
+    "styled-components": "^5.3.11",
     "swiper": "^11.0.4",
     "tesseract.js": "^7.0.0",
     "uuid": "^11.1.0",
