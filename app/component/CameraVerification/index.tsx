@@ -1,5 +1,5 @@
-'use client'
-import React, { useState } from "react";
+"use client";
+import React, { useRef, useState } from "react";
 import { X, RotateCw } from "lucide-react";
 import "./CameraVerification.scss";
 
@@ -13,6 +13,7 @@ const CameraVerification: React.FC<CameraVerificationProps> = ({
   onCapture,
 }) => {
   const [isCameraReady] = useState<boolean>(true); // Simulating camera state
+  const videoRef = useRef<HTMLVideoElement | null>(null);
 
   const handleCapture = (): void => {
     if (onCapture) {
@@ -40,8 +41,13 @@ const CameraVerification: React.FC<CameraVerificationProps> = ({
         <div className="camera-mask">
           {isCameraReady ? (
             <div className="camera-stream">
-              {/* <video ref={videoRef} autoPlay playsInline className="video-element" /> */}
-              Camera Stream Active
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                className="video-element"
+              />
+              {/* Camera Stream Active */}
             </div>
           ) : (
             <div className="camera-fallback" />
