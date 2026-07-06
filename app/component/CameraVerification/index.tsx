@@ -158,10 +158,20 @@ const CameraVerification: React.FC<CameraVerificationProps> = ({
         {/* Capture/Confirm Controls */}
         {capturedImage ? (
           <>
-            <button onClick={handleRetake} className="btn-icon" type="button">
+            <button
+              onClick={handleRetake}
+              className="btn-icon"
+              type="button"
+              style={{ backgroundColor: "white", color: "black" }}
+            >
               Retake
             </button>
-            <button onClick={handleConfirm} className="btn-icon" type="button">
+            <button
+              onClick={handleConfirm}
+              className="btn-icon"
+              type="button"
+              style={{ backgroundColor: "white", color: "black" }}
+            >
               Confirm
             </button>
           </>
