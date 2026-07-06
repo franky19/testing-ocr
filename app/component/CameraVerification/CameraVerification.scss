@@ -78,6 +78,10 @@ $mask-overlay: rgba(39, 39, 42, 0.85);
         justify-content: center;
         color: $text-muted;
         font-size: 0.875rem;
+
+        .video-element.mirrored {
+          transform: scaleX(-1);
+        }
       }
 
       .camera-fallback {

@@ -5,7 +5,7 @@ import { useCameraLifecycle } from "./hooks/useCameraLifecycle";
 import { useCameraCapture } from "./hooks/useCameraCapture";
 import "./CameraVerification.scss";
 
- interface CameraVerificationProps {
+interface CameraVerificationProps {
   onClose: () => void;
   onCapture?: (data: any) => void;
 }
@@ -16,9 +16,19 @@ const CameraVerification: React.FC<CameraVerificationProps> = ({
 }) => {
   const [showPermissionModal, setShowPermissionModal] = useState(true);
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  
-  const { stream, loading, error, facingMode, devices, startCamera, switchCamera } = useCameraLifecycle();
-  const { captureImage, capturing } = useCameraCapture(videoRef);
+
+  const {
+    stream,
+    loading,
+    error,
+    facingMode,
+    devices,
+    startCamera,
+    switchCamera,
+    stopCamera,
+  } = useCameraLifecycle();
+  const { captureImage, capturing, capturedImage, setCapturedImage } =
+    useCameraCapture(videoRef);
 
   useEffect(() => {
     if (stream && videoRef.current) {
@@ -33,8 +43,19 @@ const CameraVerification: React.FC<CameraVerificationProps> = ({
 
   const handleCapture = async () => {
     const result = await captureImage();
-    if (result && onCapture) {
-      onCapture(result);
+    if (result) {
+      stopCamera();
+    }
+  };
+
+  const handleRetake = async () => {
+    setCapturedImage(null);
+    await startCamera(facingMode);
+  };
+
+  const handleConfirm = () => {
+    if (capturedImage && onCapture) {
+      onCapture(capturedImage);
     }
   };
 
@@ -44,12 +65,16 @@ const CameraVerification: React.FC<CameraVerificationProps> = ({
 
   return (
     <div className="camera-container">
-       {showPermissionModal && (
+      {showPermissionModal && (
         <dialog open className="modal-overlay">
           <div className="modal-content">
             <h3>Camera Permission Required</h3>
-            <p>We need access to your camera to perform biometric verification.</p>
-            <p>Your camera will only be used during this verification process.</p>
+            <p>
+              We need access to your camera to perform biometric verification.
+            </p>
+            <p>
+              Your camera will only be used during this verification process.
+            </p>
             <p>No image is captured until the user presses Capture.</p>
             <button onClick={handleContinue}>Continue</button>
             <button onClick={onClose}>Cancel</button>
@@ -61,9 +86,15 @@ const CameraVerification: React.FC<CameraVerificationProps> = ({
       <div className="camera-content">
         {loading && <p>Loading camera...</p>}
         {error && <p className="error">{error}</p>}
-        {!stream && !loading && !error && !showPermissionModal && (
-          <div className="camera-fallback">Camera not available or permission denied.</div>
-        )}
+        {!stream &&
+          !loading &&
+          !error &&
+          !showPermissionModal &&
+          !capturedImage && (
+            <div className="camera-fallback">
+              Camera not available or permission denied.
+            </div>
+          )}
         {stream && (
           <>
             <h2 className="camera-title">
@@ -72,18 +103,44 @@ const CameraVerification: React.FC<CameraVerificationProps> = ({
 
             {/* Camera Mask / Circle Cutout */}
             <div className="camera-mask">
-              <div className="camera-stream">
-                <video
-                  ref={videoRef}
-                  autoPlay
-                  playsInline
-                  className="video-element"
-                />
-                {/* Camera Stream Active */}
-              </div>
+              {capturedImage ? (
+                <div className="camera-stream">
+                  <img
+                    src={capturedImage.base64}
+                    alt="Captured"
+                    className="video-element"
+                  />
+                </div>
+              ) : (
+                <div className="camera-stream">
+                  <video
+                    ref={videoRef}
+                    autoPlay
+                    playsInline
+                    className={`video-element ${facingMode === "user" ? "mirrored" : ""}`}
+                  />
+                  {/* Camera Stream Active */}
+                </div>
+              )}
             </div>
           </>
         )}
+        {capturedImage?.base64 ? (
+          <>
+            <h2 className="camera-title">Capture images</h2>
+
+            {/* Camera Mask / Circle Cutout */}
+            <div className="camera-mask">
+              <div className="camera-stream">
+                <img
+                  src={capturedImage?.base64 || ""}
+                  alt="Captured"
+                  className="video-element"
+                />
+              </div>
+            </div>
+          </>
+        ) : null}
       </div>
 
       {/* Bottom Controls Panel */}
@@ -98,19 +155,30 @@ const CameraVerification: React.FC<CameraVerificationProps> = ({
           <X className="icon-close" strokeWidth={2} />
         </button>
 
-        {/* Capture Shutter Button */}
-        <button
-          onClick={handleCapture}
-          className="btn-shutter"
-          aria-label="Take photo"
-          type="button"
-          disabled={!stream || capturing}
-        >
-          <div className="btn-shutter-inner" />
-        </button>
+        {/* Capture/Confirm Controls */}
+        {capturedImage ? (
+          <>
+            <button onClick={handleRetake} className="btn-icon" type="button">
+              Retake
+            </button>
+            <button onClick={handleConfirm} className="btn-icon" type="button">
+              Confirm
+            </button>
+          </>
+        ) : (
+          <button
+            onClick={handleCapture}
+            className="btn-shutter"
+            aria-label="Take photo"
+            type="button"
+            disabled={!stream || capturing}
+          >
+            <div className="btn-shutter-inner" />
+          </button>
+        )}
 
         {/* Camera Flip Button */}
-        {devices.length > 1 && (
+        {!capturedImage && devices.length > 1 && (
           <button
             onClick={handleFlipCamera}
             className="btn-icon"
