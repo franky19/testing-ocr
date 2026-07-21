@@ -122,13 +122,21 @@ const CameraVerificationV2: React.FC<CameraVerificationProps> = ({
       {/* Bottom Controls Panel */}
       {capturedImage ? (
         <div className="capture-controls-btn">
-          <Buttons
+          {/* <Buttons
             types="primary"
             sizes="xl"
             label="Lanjutkan"
             stretch
             onClick={handleConfirm}
-          />
+          /> */}
+          <button
+            onClick={handleConfirm}
+            className="btn-icon"
+            type="button"
+            style={{ backgroundColor: "white", color: "black" }}
+          >
+            Confirm
+          </button>
           {/* <Buttons
             types="tertiery"
             sizes="xl"
