@@ -1,0 +1,177 @@
+// @import '../../../../../packages/smartfren-ui/utils/resources.scss';
+// Variables
+$bg-color: #27272a; // zinc-800
+$text-color: #ffffff;
+$text-muted: #71717a; // zinc-500
+$mask-overlay: rgba(39, 39, 42, 0.85);
+
+.camera-container {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  // min-height: 100vh;
+  background-color: $bg-color;
+  color: $text-color;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    sans-serif;
+  // padding: 1.5rem;
+  user-select: none;
+  overflow: hidden;
+  width: 100%;
+  gap: 24px;
+  height: 100%;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25); // shadow-2xl
+
+  // @media (min-width: $breakpoint-tablet) {
+  //   min-height: 100vh;
+  //   max-width: 448px; // max-w-md
+  //   margin: 0 auto;
+  //   border-radius: 1.5rem; // rounded-3xl
+  // }
+
+  .camera-top-bar {
+    width: 100%;
+    padding-top: 1rem;
+  }
+
+  .camera-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+
+    justify-content: center;
+    width: 100%;
+    max-width: 20rem; // max-w-xs
+    text-align: center;
+    z-index: 10;
+
+    // @media (min-width: $breakpoint-tablet) {
+    //   flex: 1;
+    // }
+
+    .camera-title {
+      font-size: 1.25rem; // text-xl
+      font-weight: 500;
+      tracking-width: 0.05em;
+      line-height: 1.625;
+      color: #f4f4f5; // zinc-100
+      margin-bottom: 3rem; // mb-12
+      padding: 0 0.5rem;
+      z-index: 1;
+    }
+
+    .camera-mask {
+      position: relative;
+      width: 18rem; // w-72
+      height: 18rem; // h-72
+      border-radius: 50%;
+      border: 4px solid $text-color;
+      background-color: #000;
+      // Creates the letterbox framing effect outside the circle
+      box-shadow: 0 0 0 9999px $mask-overlay;
+      z-index: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+
+      .camera-stream {
+        position: absolute;
+        inset: 0;
+        background-color: #171717; // neutral-900
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: $text-muted;
+        font-size: 0.875rem;
+        // width: 260px;
+        // height: 260px;
+
+        .video-element.mirrored {
+          transform: scaleX(-1);
+        }
+      }
+
+      .camera-fallback {
+        width: 100%;
+        height: 100%;
+        background-color: #000;
+      }
+    }
+  }
+
+  .camera-controls {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 3rem 1.5rem 2rem 1.5rem; // pt-12 px-6 pb-8
+    z-index: 10;
+
+    .btn-icon {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 3rem;
+      height: 3rem;
+      border-radius: 50%;
+      background-color: rgba(255, 255, 255, 0.1);
+      border: none;
+      cursor: pointer;
+      transition: background-color 0.2s ease;
+
+      &:active {
+        background-color: rgba(255, 255, 255, 0.2);
+      }
+
+      .icon-close {
+        width: 1.5rem;
+        height: 1.5rem;
+        color: $text-color;
+      }
+
+      .icon-flip {
+        width: 1.25rem;
+        height: 1.25rem;
+        color: $text-color;
+      }
+    }
+
+    .btn-shutter {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 5rem; // w-20
+      height: 5rem; // h-20
+      border-radius: 50%;
+      border: 4px solid $text-color;
+      background-color: transparent;
+      padding: 0.25rem;
+      cursor: pointer;
+      transition: transform 0.1s ease;
+
+      &:active {
+        transform: scale(0.95);
+      }
+
+      .btn-shutter-inner {
+        width: 100%;
+        height: 100%;
+        background-color: $text-color;
+        border-radius: 50%;
+      }
+    }
+  }
+  .capture-controls-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 12px;
+    width: 100%;
+    z-index: 12;
+    padding: 16px;
+  }
+}

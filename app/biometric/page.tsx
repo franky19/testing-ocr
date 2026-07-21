@@ -1,9 +1,9 @@
 'use client'
-import CameraVerification from "../component/CameraVerification";
+import CameraVerificationV2 from "../component/CameraVerificationV2";
 
 const BiometricPage = () => {
   return (
-    <CameraVerification
+    <CameraVerificationV2
       onClose={()=>{}}
     />
   );
